@@ -14,7 +14,7 @@ option(CML_FETCH_OPENBLAS "Fetch OpenBLAS when no system BLAS is found" ON)
 
 include(FetchContent)
 
-find_package(BLAS REQUIRED)
+find_package(BLAS QUIET)
 
 set(CML_BLAS_TARGET "")
 set(CML_CBLAS_INCLUDE_DIR "")
