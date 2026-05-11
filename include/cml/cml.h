@@ -4,6 +4,7 @@
 #include "context.h"
 #include "linear.h"
 #include "loss.h"
+#include "nn.h"
 #include "sgd.h"
 #include "tape.h"
 #include "tensor.h"

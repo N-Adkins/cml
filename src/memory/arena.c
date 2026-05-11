@@ -40,3 +40,15 @@ void *cml_arena_alloc(cml_arena_t *arena, size_t size) {
 void cml_arena_reset(cml_arena_t *arena) {
     arena->offset = 0;
 }
+
+size_t cml_arena_mark(const cml_arena_t *arena) {
+    if (arena == NULL) return 0;
+    return arena->offset;
+}
+
+void cml_arena_rewind(cml_arena_t *arena, size_t mark) {
+    if (arena == NULL) return;
+    if (mark <= arena->offset) {
+        arena->offset = mark;
+    }
+}

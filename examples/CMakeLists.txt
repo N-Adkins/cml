@@ -6,3 +6,4 @@ function(add_example name)
 endfunction()
 
 add_example(linear_regression)
+add_example(nn_nonlinear_regression)

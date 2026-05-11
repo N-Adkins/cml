@@ -43,10 +43,15 @@ void cml_trainer_fit(cml_context_t *ctx, cml_trainer_t *trainer,
     while (tmp >= 10) { tmp /= 10; width++; }
 
     for (size_t epoch = 0; epoch < epochs; epoch++) {
+        size_t arena_mark = cml_arena_mark(&ctx->arena);
         if (ctx->status != CML_OK) break;
 
         cml_tensor_t *loss = trainer->loss_fn(ctx, trainer->model, x, y);
-        if (loss == NULL) break;
+        if (loss == NULL) {
+            cml_tape_clear(ctx);
+            cml_arena_rewind(&ctx->arena, arena_mark);
+            break;
+        }
 
         float loss_val = cml_tensor_get(loss, 0, 0);
 
@@ -58,5 +63,6 @@ void cml_trainer_fit(cml_context_t *ctx, cml_trainer_t *trainer,
         cml_backward(ctx, loss);
         cml_sgd_step(trainer->opt, trainer->params, trainer->n_params);
         cml_tape_clear(ctx);
+        cml_arena_rewind(&ctx->arena, arena_mark);
     }
 }

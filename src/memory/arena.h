@@ -15,5 +15,7 @@ cml_status_t cml_arena_init(cml_arena_t *arena, size_t capacity_bytes);
 void cml_arena_deinit(cml_arena_t *arena);
 void *cml_arena_alloc(cml_arena_t *arena, size_t size);
 void cml_arena_reset(cml_arena_t *arena);
+size_t cml_arena_mark(const cml_arena_t *arena);
+void cml_arena_rewind(cml_arena_t *arena, size_t mark);
 
 #endif
