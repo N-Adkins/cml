@@ -144,3 +144,8 @@ add_subdirectory(src)
 if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()
+
+option(CML_BUILD_EXAMPLES "Build example programs" ON)
+if(CML_BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()

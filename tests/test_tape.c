@@ -185,10 +185,10 @@ static void test_backward_dot(void) {
     TEST_ASSERT_FLOAT_WITHIN(DELTA, 15.0f, cml_tensor_get(ga, 0, 1));
     TEST_ASSERT_FLOAT_WITHIN(DELTA, 11.0f, cml_tensor_get(ga, 1, 0));
     TEST_ASSERT_FLOAT_WITHIN(DELTA, 15.0f, cml_tensor_get(ga, 1, 1));
-    TEST_ASSERT_FLOAT_WITHIN(DELTA, 4.0f,  cml_tensor_get(gb, 0, 0));
-    TEST_ASSERT_FLOAT_WITHIN(DELTA, 4.0f,  cml_tensor_get(gb, 0, 1));
-    TEST_ASSERT_FLOAT_WITHIN(DELTA, 6.0f,  cml_tensor_get(gb, 1, 0));
-    TEST_ASSERT_FLOAT_WITHIN(DELTA, 6.0f,  cml_tensor_get(gb, 1, 1));
+    TEST_ASSERT_FLOAT_WITHIN(DELTA, 4.0f, cml_tensor_get(gb, 0, 0));
+    TEST_ASSERT_FLOAT_WITHIN(DELTA, 4.0f, cml_tensor_get(gb, 0, 1));
+    TEST_ASSERT_FLOAT_WITHIN(DELTA, 6.0f, cml_tensor_get(gb, 1, 0));
+    TEST_ASSERT_FLOAT_WITHIN(DELTA, 6.0f, cml_tensor_get(gb, 1, 1));
 }
 
 static void test_backward_transpose(void) {

@@ -79,3 +79,10 @@ cml_tensor_t *cml_linear_bias(const cml_linear_t *layer) {
     if (layer == NULL) return NULL;
     return layer->b;
 }
+
+size_t cml_linear_collect_params(cml_linear_t *layer, cml_tensor_t **params, size_t offset) {
+    if (layer == NULL || params == NULL) return offset;
+    params[offset]     = layer->w;
+    params[offset + 1] = layer->b;
+    return offset + 2;
+}

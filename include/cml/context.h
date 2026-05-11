@@ -3,12 +3,16 @@
 
 #include <stddef.h>
 
-#include "status.h"
-
 // This is the entire context for an AI program. It is opaque and hidden from the user - but
 // it has some internals used for things like memory allocation.
 
 typedef struct cml_context_s cml_context_t;
+
+typedef enum {
+    CML_OK = 0,
+    CML_INVALID_ARG,
+    CML_OUT_OF_MEMORY,
+} cml_status_t;
 
 // Spins up an entire CML instance - notably there is no global state so multiple should be able
 // to run at the same time.

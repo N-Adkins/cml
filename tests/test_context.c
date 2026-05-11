@@ -1,5 +1,4 @@
 #include <cml/context.h>
-#include <cml/status.h>
 #include "context.h"
 #include "memory/arena.h"
 #include "unity.h"

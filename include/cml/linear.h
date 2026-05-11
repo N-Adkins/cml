@@ -16,4 +16,7 @@ cml_tensor_t *cml_linear_forward(cml_context_t *ctx, cml_linear_t *layer, cml_te
 cml_tensor_t *cml_linear_weight(const cml_linear_t *layer);
 cml_tensor_t *cml_linear_bias(const cml_linear_t *layer);
 
+// Writes weight and bias into params[offset] and params[offset+1]; returns offset + 2.
+size_t cml_linear_collect_params(cml_linear_t *layer, cml_tensor_t **params, size_t offset);
+
 #endif

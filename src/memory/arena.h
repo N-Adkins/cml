@@ -1,7 +1,7 @@
 #ifndef CML_INTERNAL_MEMORY_ARENA_H
 #define CML_INTERNAL_MEMORY_ARENA_H
 
-#include <cml/status.h>
+#include <cml/context.h>
 #include <stddef.h>
 
 // Very simple bump allocator

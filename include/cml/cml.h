@@ -4,8 +4,9 @@
 #include "context.h"
 #include "linear.h"
 #include "loss.h"
-#include "status.h"
+#include "sgd.h"
 #include "tape.h"
 #include "tensor.h"
+#include "trainer.h"
 
 #endif

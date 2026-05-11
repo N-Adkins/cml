@@ -120,7 +120,7 @@ static void test_linear_forward_known_values(void) {
 
     cml_tensor_t *out = cml_linear_forward(ctx, l, x);
     TEST_ASSERT_NOT_NULL(out);
-    TEST_ASSERT_FLOAT_WITHIN(DELTA, 8.0f,  cml_tensor_get(out, 0, 0));
+    TEST_ASSERT_FLOAT_WITHIN(DELTA, 8.0f, cml_tensor_get(out, 0, 0));
     TEST_ASSERT_FLOAT_WITHIN(DELTA, 14.0f, cml_tensor_get(out, 0, 1));
 }
 
@@ -141,9 +141,9 @@ static void test_linear_forward_shape_mismatch_errors(void) {
 /* --- backward --- */
 
 static void test_linear_backward_weight_grad(void) {
-    /* w = [[2],[3]], b = [[0]], x = [[1,1]] (batch=1)
-     * out = dot(x,w) + b = [[5]]; loss = sum = 5
-     * grad_w = x^T @ grad_z = [[1],[1]]              */
+    // w = [[2],[3]], b = [[0]], x = [[1,1]] (batch=1)
+    // out = dot(x,w) + b = [[5]]; loss = sum = 5
+    // grad_w = x^T @ grad_z = [[1],[1]]
     cml_linear_t *l = cml_linear_init(ctx, 2, 1);
     cml_tensor_t *w = cml_linear_weight(l);
     cml_tensor_set(w, 0, 0, 2.0f);
@@ -163,9 +163,9 @@ static void test_linear_backward_weight_grad(void) {
 }
 
 static void test_linear_backward_bias_grad(void) {
-    /* x = [[1,1],[2,2]] (batch=2), w = [[1],[1]], b = [[0]]
-     * out = [[2],[4]]; loss = sum = 6
-     * grad_b = sum_rows(grad_out) = [[1+1]] = [[2]]          */
+    // x = [[1,1],[2,2]] (batch=2), w = [[1],[1]], b = [[0]]
+    // out = [[2],[4]]; loss = sum = 6
+    // grad_b = sum_rows(grad_out) = [[1+1]] = [[2]]
     cml_linear_t *l = cml_linear_init(ctx, 2, 1);
     cml_tensor_t *w = cml_linear_weight(l);
     cml_tensor_set(w, 0, 0, 1.0f);

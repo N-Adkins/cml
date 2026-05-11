@@ -1,0 +1,8 @@
+function(add_example name)
+    add_executable(${name} ${name}.c)
+    target_link_libraries(${name} PRIVATE cml)
+    cml_apply_warnings(${name})
+    cml_apply_sanitizers(${name})
+endfunction()
+
+add_example(linear_regression)
