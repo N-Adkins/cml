@@ -1,6 +1,7 @@
 #ifndef CML_TENSOR_H
 #define CML_TENSOR_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include "context.h"
 
@@ -47,5 +48,11 @@ cml_tensor_t *cml_tensor_mul(cml_context_t *ctx, cml_tensor_t *a, cml_tensor_t *
 cml_tensor_t *cml_tensor_dot(cml_context_t *ctx, cml_tensor_t *a, cml_tensor_t *b);
 cml_tensor_t *cml_tensor_transpose(cml_context_t *ctx, cml_tensor_t *tensor);
 cml_tensor_t *cml_tensor_sum(cml_context_t *ctx, cml_tensor_t *tensor);
+
+// Autograd
+
+void cml_tensor_set_requires_grad(cml_tensor_t *tensor, bool requires_grad);
+bool cml_tensor_requires_grad(const cml_tensor_t *tensor);
+cml_tensor_t *cml_tensor_grad(const cml_tensor_t *tensor);
 
 #endif

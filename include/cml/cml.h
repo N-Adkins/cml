@@ -3,6 +3,7 @@
 
 #include "context.h"
 #include "status.h"
+#include "tape.h"
 #include "tensor.h"
 
 #endif

@@ -11,6 +11,8 @@ cml_context_t *cml_init(size_t start_size) {
     cml_arena_init(&ctx->arena, start_size);
     ctx->status = CML_OK;
     ctx->error_msg = NULL;
+    ctx->tape_head = NULL;
+    ctx->grad_enabled = true;
 
     return ctx;
 }

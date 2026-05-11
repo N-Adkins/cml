@@ -3,11 +3,18 @@
 
 #include <cml/tensor.h>
 
+#include <stdbool.h>
+
+struct cml_tape_node_s;
+
 struct cml_tensor_s {
     size_t rows;
     size_t cols;
     size_t stride; /* elements between row starts; equals cols for contiguous tensors */
     float *data;
+    struct cml_tensor_s *grad;
+    bool requires_grad;
+    struct cml_tape_node_s *creator;
 };
 
 #endif

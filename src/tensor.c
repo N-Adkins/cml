@@ -1,5 +1,6 @@
 #include "tensor.h"
 #include "context.h"
+#include "tape.h"
 
 #include <cblas.h>
 #include <math.h>
@@ -16,6 +17,9 @@ static cml_tensor_t *tensor_alloc(cml_context_t *ctx, size_t rows, size_t cols) 
     t->cols = cols;
     t->stride = cols;
     t->data = NULL;
+    t->grad = NULL;
+    t->requires_grad = false;
+    t->creator = NULL;
     return t;
 }
 
@@ -171,6 +175,7 @@ cml_tensor_t *cml_tensor_scale(cml_context_t *ctx, cml_tensor_t *tensor, float s
         cblas_sscal((int)out->cols, scalar, out->data + r * out->stride, 1);
     }
 
+    cml_tape_record_scale(ctx, out, tensor, scalar);
     return out;
 }
 
@@ -193,6 +198,7 @@ cml_tensor_t *cml_tensor_sigmoid(cml_context_t *ctx, cml_tensor_t *tensor) {
         }
     }
 
+    cml_tape_record_sigmoid(ctx, out, tensor);
     return out;
 }
 
@@ -215,6 +221,7 @@ cml_tensor_t *cml_tensor_relu(cml_context_t *ctx, cml_tensor_t *tensor) {
         }
     }
 
+    cml_tape_record_relu(ctx, out, tensor);
     return out;
 }
 
@@ -245,7 +252,10 @@ cml_tensor_t *cml_tensor_add(cml_context_t *ctx, cml_tensor_t *a, cml_tensor_t *
         cml_context_error(ctx, CML_INVALID_ARG, "tensor argument is NULL");
         return NULL;
     }
-    return tensor_add_scaled(ctx, a, b, 1.0f);
+    cml_tensor_t *out = tensor_add_scaled(ctx, a, b, 1.0f);
+    if (out == NULL) return NULL;
+    cml_tape_record_add(ctx, out, a, b);
+    return out;
 }
 
 cml_tensor_t *cml_tensor_sub(cml_context_t *ctx, cml_tensor_t *a, cml_tensor_t *b) {
@@ -255,7 +265,10 @@ cml_tensor_t *cml_tensor_sub(cml_context_t *ctx, cml_tensor_t *a, cml_tensor_t *
         cml_context_error(ctx, CML_INVALID_ARG, "tensor argument is NULL");
         return NULL;
     }
-    return tensor_add_scaled(ctx, a, b, -1.0f);
+    cml_tensor_t *out = tensor_add_scaled(ctx, a, b, -1.0f);
+    if (out == NULL) return NULL;
+    cml_tape_record_sub(ctx, out, a, b);
+    return out;
 }
 
 cml_tensor_t *cml_tensor_mul(cml_context_t *ctx, cml_tensor_t *a, cml_tensor_t *b) {
@@ -282,6 +295,7 @@ cml_tensor_t *cml_tensor_mul(cml_context_t *ctx, cml_tensor_t *a, cml_tensor_t *
         }
     }
 
+    cml_tape_record_mul(ctx, out, a, b);
     return out;
 }
 
@@ -308,6 +322,7 @@ cml_tensor_t *cml_tensor_dot(cml_context_t *ctx, cml_tensor_t *a, cml_tensor_t *
                 0.0f,
                 out->data, (int)out->stride);
 
+    cml_tape_record_dot(ctx, out, a, b);
     return out;
 }
 
@@ -328,6 +343,7 @@ cml_tensor_t *cml_tensor_transpose(cml_context_t *ctx, cml_tensor_t *tensor) {
         }
     }
 
+    cml_tape_record_transpose(ctx, out, tensor);
     return out;
 }
 
@@ -351,5 +367,21 @@ cml_tensor_t *cml_tensor_sum(cml_context_t *ctx, cml_tensor_t *tensor) {
     }
 
     out->data[0] = total;
+    cml_tape_record_sum(ctx, out, tensor);
     return out;
+}
+
+void cml_tensor_set_requires_grad(cml_tensor_t *tensor, bool requires_grad) {
+    if (tensor == NULL) return;
+    tensor->requires_grad = requires_grad;
+}
+
+bool cml_tensor_requires_grad(const cml_tensor_t *tensor) {
+    if (tensor == NULL) return false;
+    return tensor->requires_grad;
+}
+
+cml_tensor_t *cml_tensor_grad(const cml_tensor_t *tensor) {
+    if (tensor == NULL) return NULL;
+    return tensor->grad;
 }

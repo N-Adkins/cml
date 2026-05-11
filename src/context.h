@@ -4,11 +4,18 @@
 #include <cml/context.h>
 #include "memory/arena.h"
 
-// Opaque pointer impl for cml_context_t
+#include <stdbool.h>
+
+struct cml_tape_node_s;
+
 struct cml_context_s {
     cml_arena_t arena;
     cml_status_t status;
     const char *error_msg;
+
+    // Autograd
+    struct cml_tape_node_s *tape_head;
+    bool grad_enabled;
 };
 
 void cml_context_error(cml_context_t *ctx, cml_status_t status, const char *error_msg);

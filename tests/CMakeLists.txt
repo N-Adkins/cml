@@ -35,3 +35,4 @@ endmacro()
 
 add_unity_test(test_context.c)
 add_unity_test(test_tensor.c)
+add_unity_test(test_tape.c)
