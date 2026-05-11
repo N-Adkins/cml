@@ -34,6 +34,7 @@ macro(add_unity_test file_name)
 endmacro()
 
 add_unity_test(test_context.c)
+add_unity_test(test_linear.c)
 add_unity_test(test_loss.c)
 add_unity_test(test_tape.c)
 add_unity_test(test_tensor.c)

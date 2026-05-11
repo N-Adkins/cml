@@ -54,6 +54,27 @@ static void backward_scale(cml_context_t *ctx, struct cml_tape_node_s *node) {
     grad_accum_scaled(ctx, node->inputs[0], node->output->grad, *(float *)node->aux);
 }
 
+static void backward_add_bias(cml_context_t *ctx, struct cml_tape_node_s *node) {
+    cml_tensor_t *a = node->inputs[0]; /* [M x N] */
+    cml_tensor_t *b = node->inputs[1]; /* [1 x N] */
+    cml_tensor_t *g = node->output->grad;
+
+    grad_accum_scaled(ctx, a, g, 1.0f);
+
+    if (b->requires_grad) {
+        cml_tensor_t *gb = cml_tensor_init(ctx, 1, b->cols);
+        if (gb == NULL) return;
+        cml_tensor_zero(gb);
+        /* sum incoming gradient over the batch dimension */
+        for (size_t r = 0; r < g->rows; r++) {
+            cblas_saxpy((int)g->cols, 1.0f,
+                        g->data + r * g->stride, 1,
+                        gb->data, 1);
+        }
+        grad_accum_scaled(ctx, b, gb, 1.0f);
+    }
+}
+
 static void backward_log(cml_context_t *ctx, struct cml_tape_node_s *node) {
     cml_tensor_t *x = node->inputs[0];
     cml_tensor_t *recip = cml_tensor_init(ctx, x->rows, x->cols);
@@ -200,6 +221,13 @@ void cml_tape_record_dot(cml_context_t *ctx, cml_tensor_t *out,
 
     cml_tensor_t *inputs[] = {a, b};
     tape_push(ctx, out, inputs, 2, backward_dot, NULL);
+}
+
+void cml_tape_record_add_bias(cml_context_t *ctx, cml_tensor_t *out,
+                               cml_tensor_t *a, cml_tensor_t *b) {
+    if (!needs_grad(ctx, a, b)) return;
+    cml_tensor_t *inputs[] = {a, b};
+    tape_push(ctx, out, inputs, 2, backward_add_bias, NULL);
 }
 
 void cml_tape_record_scale(cml_context_t *ctx, cml_tensor_t *out,
