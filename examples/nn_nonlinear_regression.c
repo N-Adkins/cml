@@ -23,7 +23,7 @@ static cml_tensor_t *forward(cml_context_t *ctx, void *ptr, cml_tensor_t *x, cml
 }
 
 int main(void) {
-    cml_context_t *ctx = cml_init(8 * 1024 * 1024);
+    cml_context_t *ctx = cml_init_with_backend(1024 * 1024, CML_BACKEND_CUDA);
     if (ctx == NULL) return 1;
 
     const size_t n_samples = 512;
@@ -42,16 +42,18 @@ int main(void) {
 
     cml_module_t *l1 = cml_nn_linear(ctx, 1, 32);
     cml_module_t *r1 = cml_nn_relu(ctx);
-    cml_module_t *l2 = cml_nn_linear(ctx, 32, 32);
+    cml_module_t *l2 = cml_nn_linear(ctx, 32, 64);
     cml_module_t *r2 = cml_nn_relu(ctx);
-    cml_module_t *l3 = cml_nn_linear(ctx, 32, 32);
+    cml_module_t *l3 = cml_nn_linear(ctx, 64, 512);
     cml_module_t *r3 = cml_nn_relu(ctx);
-    cml_module_t *l4 = cml_nn_linear(ctx, 32, 32);
+    cml_module_t *l4 = cml_nn_linear(ctx, 512, 64);
     cml_module_t *r4 = cml_nn_relu(ctx);
-    cml_module_t *l5 = cml_nn_linear(ctx, 32, 1);
-    cml_module_t *layers[] = { l1, r1, l2, r2, l3, r3, l4, r4, l5 };
+    cml_module_t *l5 = cml_nn_linear(ctx, 64, 32);
+    cml_module_t *r5 = cml_nn_relu(ctx);
+    cml_module_t *l6 = cml_nn_linear(ctx, 32, 1);
+    cml_module_t *layers[] = { l1, r1, l2, r2, l3, r3, l4, r4, l5, r5, l6 };
 
-    model_t model = { cml_nn_sequential(ctx, layers, 9) };
+    model_t model = { cml_nn_sequential(ctx, layers, 11) };
 
     const size_t n_params = cml_module_param_count(model.net);
     cml_tensor_t *params[n_params];

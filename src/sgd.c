@@ -1,8 +1,7 @@
 #include "sgd.h"
+#include "backend/backend.h"
 #include "context.h"
 #include "tensor.h"
-
-#include <cblas.h>
 
 cml_sgd_t *cml_sgd_init(cml_context_t *ctx, float lr) {
     if (ctx == NULL) return NULL;
@@ -23,10 +22,6 @@ void cml_sgd_step(cml_sgd_t *opt, cml_tensor_t **params, size_t n_params) {
     for (size_t i = 0; i < n_params; i++) {
         cml_tensor_t *p = params[i];
         if (p == NULL || p->grad == NULL) continue;
-        for (size_t r = 0; r < p->rows; r++) {
-            cblas_saxpy((int)p->cols, -opt->lr,
-                        p->grad->data + r * p->grad->stride, 1,
-                        p->data + r * p->stride, 1);
-        }
+        cml_backend_accum_scaled(p->ctx, p, p->grad, -opt->lr);
     }
 }

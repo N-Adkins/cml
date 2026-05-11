@@ -11,6 +11,28 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 option(CML_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" ON)
 option(CML_FETCH_OPENBLAS "Fetch OpenBLAS when no system BLAS is found" ON)
+option(CML_ENABLE_CUDA "Enable CUDA backend support" OFF)
+option(CML_CUDA_ALLOW_UNSUPPORTED_COMPILER
+    "Pass -allow-unsupported-compiler to nvcc (useful with newer GCC versions)"
+    ON
+)
+
+if(CML_ENABLE_CUDA)
+    set(_cml_cuda_standard 14)
+    if(CML_CUDA_ALLOW_UNSUPPORTED_COMPILER)
+        set(_cml_cuda_standard 20)
+        if(NOT CMAKE_CUDA_FLAGS MATCHES "(^| )-allow-unsupported-compiler( |$)")
+            string(APPEND CMAKE_CUDA_FLAGS " -allow-unsupported-compiler")
+        endif()
+        if(NOT CMAKE_CUDA_FLAGS MATCHES "(^| )-std=c\\+\\+20( |$)")
+            string(APPEND CMAKE_CUDA_FLAGS " -std=c++20")
+        endif()
+    endif()
+    enable_language(CUDA)
+    set(CMAKE_CUDA_STANDARD ${_cml_cuda_standard})
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+    find_package(CUDAToolkit REQUIRED)
+endif()
 
 include(FetchContent)
 
@@ -84,38 +106,41 @@ endif()
 
 function(cml_apply_warnings target)
     if(MSVC)
-        target_compile_options(${target} PRIVATE /W4 /WX)
+        target_compile_options(${target} PRIVATE
+            $<$<COMPILE_LANGUAGE:C>:/W4>
+            $<$<COMPILE_LANGUAGE:C>:/WX>
+        )
     else()
         target_compile_options(
             ${target}
             PRIVATE
-                -Wall
-                -Wextra
-                -Wpedantic
-                -Werror
-                -Wcast-qual
-                -Wconversion
-                -Wdouble-promotion
-                -Wformat=2
-                -Wmissing-declarations
-                -Wmissing-prototypes
-                -Wnull-dereference
-                -Wold-style-definition
-                -Wredundant-decls
-                -Wshadow
-                -Wsign-conversion
-                -Wstrict-prototypes
-                -Wswitch-enum
-                -Wundef
-                -Wunreachable-code
-                -Wwrite-strings
-                -fno-common
+                $<$<COMPILE_LANGUAGE:C>:-Wall>
+                $<$<COMPILE_LANGUAGE:C>:-Wextra>
+                $<$<COMPILE_LANGUAGE:C>:-Wpedantic>
+                $<$<COMPILE_LANGUAGE:C>:-Werror>
+                $<$<COMPILE_LANGUAGE:C>:-Wcast-qual>
+                $<$<COMPILE_LANGUAGE:C>:-Wconversion>
+                $<$<COMPILE_LANGUAGE:C>:-Wdouble-promotion>
+                $<$<COMPILE_LANGUAGE:C>:-Wformat=2>
+                $<$<COMPILE_LANGUAGE:C>:-Wmissing-declarations>
+                $<$<COMPILE_LANGUAGE:C>:-Wmissing-prototypes>
+                $<$<COMPILE_LANGUAGE:C>:-Wnull-dereference>
+                $<$<COMPILE_LANGUAGE:C>:-Wold-style-definition>
+                $<$<COMPILE_LANGUAGE:C>:-Wredundant-decls>
+                $<$<COMPILE_LANGUAGE:C>:-Wshadow>
+                $<$<COMPILE_LANGUAGE:C>:-Wsign-conversion>
+                $<$<COMPILE_LANGUAGE:C>:-Wstrict-prototypes>
+                $<$<COMPILE_LANGUAGE:C>:-Wswitch-enum>
+                $<$<COMPILE_LANGUAGE:C>:-Wundef>
+                $<$<COMPILE_LANGUAGE:C>:-Wunreachable-code>
+                $<$<COMPILE_LANGUAGE:C>:-Wwrite-strings>
+                $<$<COMPILE_LANGUAGE:C>:-fno-common>
         )
     endif()
 endfunction()
 
 function(cml_apply_sanitizers target)
-    if(CML_ENABLE_SANITIZERS AND NOT MSVC)
+    if(CML_ENABLE_SANITIZERS AND NOT MSVC AND NOT CML_ENABLE_CUDA)
         target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
         target_link_options(${target} PRIVATE -fsanitize=address,undefined)
     endif()
@@ -138,6 +163,10 @@ endif()
 target_link_libraries(cml PUBLIC ${CML_BLAS_TARGET})
 if (NOT WIN32)
     target_link_libraries(cml PRIVATE m)
+endif()
+if(CML_ENABLE_CUDA)
+    target_compile_definitions(cml PRIVATE CML_ENABLE_CUDA)
+    target_link_libraries(cml PRIVATE CUDA::cudart CUDA::cublas)
 endif()
 
 cml_apply_warnings(cml)

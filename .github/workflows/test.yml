@@ -27,3 +27,26 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build --build-config Debug --output-on-failure
+
+  build-and-test-cuda:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OpenBLAS
+        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev
+
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.26
+        with:
+          cuda: "13.0.0"
+
+      - name: Configure (CUDA)
+        run: cmake -S . -B build-cuda -DCMAKE_BUILD_TYPE=Debug -DCML_ENABLE_CUDA=ON
+
+      - name: Build (CUDA)
+        run: cmake --build build-cuda --config Debug
+
+      - name: Test (CUDA)
+        run: ctest --test-dir build-cuda --build-config Debug --output-on-failure

@@ -18,8 +18,9 @@ void tearDown(void) {
 static void test_init_creates_valid_context(void) {
     ctx = cml_init(1024);
     TEST_ASSERT_NOT_NULL(ctx);
-    TEST_ASSERT_NOT_NULL(ctx->arena.buffer);
-    TEST_ASSERT_EQUAL_size_t(1024, ctx->arena.capacity);
+    TEST_ASSERT_NOT_NULL(ctx->arena.head);
+    TEST_ASSERT_NOT_NULL(ctx->arena.head->buffer);
+    TEST_ASSERT_EQUAL_size_t(1024, ctx->arena.head->capacity);
     TEST_ASSERT_EQUAL_size_t(0, ctx->arena.offset);
     TEST_ASSERT_EQUAL(CML_OK, ctx->status);
     TEST_ASSERT_NULL(ctx->error_msg);
@@ -30,6 +31,18 @@ static void test_init_status_ok(void) {
     TEST_ASSERT_EQUAL(CML_OK, cml_get_status(ctx));
 }
 
+static void test_init_with_cpu_backend(void) {
+    ctx = cml_init_with_backend(256, CML_BACKEND_CPU);
+    TEST_ASSERT_NOT_NULL(ctx);
+    TEST_ASSERT_EQUAL(CML_BACKEND_CPU, cml_get_backend(ctx));
+}
+
+static void test_init_defaults_to_cpu_backend(void) {
+    ctx = cml_init(256);
+    TEST_ASSERT_NOT_NULL(ctx);
+    TEST_ASSERT_EQUAL(CML_BACKEND_CPU, cml_get_backend(ctx));
+}
+
 static void test_init_no_error_msg(void) {
     ctx = cml_init(256);
     TEST_ASSERT_NULL(cml_get_error_msg(ctx));
@@ -38,12 +51,12 @@ static void test_init_no_error_msg(void) {
 static void test_init_different_sizes(void) {
     ctx = cml_init(64);
     TEST_ASSERT_NOT_NULL(ctx);
-    TEST_ASSERT_EQUAL_size_t(64, ctx->arena.capacity);
+    TEST_ASSERT_EQUAL_size_t(64, ctx->arena.head->capacity);
     cml_deinit(ctx);
 
     ctx = cml_init(1024 * 1024);
     TEST_ASSERT_NOT_NULL(ctx);
-    TEST_ASSERT_EQUAL_size_t(1024 * 1024, ctx->arena.capacity);
+    TEST_ASSERT_EQUAL_size_t(1024 * 1024, ctx->arena.head->capacity);
 }
 
 /* --- cml_deinit --- */
@@ -111,12 +124,14 @@ static void test_arena_alloc_is_8byte_aligned(void) {
     TEST_ASSERT_EQUAL_size_t(0, ctx->arena.offset % 8);
 }
 
-static void test_arena_alloc_returns_null_when_full(void) {
+static void test_arena_alloc_grows_when_capacity_exceeded(void) {
     ctx = cml_init(32);
-    /* exhaust the arena */
-    cml_arena_alloc(&ctx->arena, 32);
-    void *p = cml_arena_alloc(&ctx->arena, 1);
-    TEST_ASSERT_NULL(p);
+    /* exhaust the initial chunk */
+    void *a = cml_arena_alloc(&ctx->arena, 32);
+    /* next alloc should trigger growth rather than fail */
+    void *b = cml_arena_alloc(&ctx->arena, 1);
+    TEST_ASSERT_NOT_NULL(a);
+    TEST_ASSERT_NOT_NULL(b);
 }
 
 static void test_arena_alloc_sequential_pointers_are_ordered(void) {
@@ -151,6 +166,8 @@ int main(void) {
 
     RUN_TEST(test_init_creates_valid_context);
     RUN_TEST(test_init_status_ok);
+    RUN_TEST(test_init_with_cpu_backend);
+    RUN_TEST(test_init_defaults_to_cpu_backend);
     RUN_TEST(test_init_no_error_msg);
     RUN_TEST(test_init_different_sizes);
 
@@ -166,7 +183,7 @@ int main(void) {
 
     RUN_TEST(test_arena_alloc_advances_offset);
     RUN_TEST(test_arena_alloc_is_8byte_aligned);
-    RUN_TEST(test_arena_alloc_returns_null_when_full);
+    RUN_TEST(test_arena_alloc_grows_when_capacity_exceeded);
     RUN_TEST(test_arena_alloc_sequential_pointers_are_ordered);
     RUN_TEST(test_arena_reset_resets_offset);
     RUN_TEST(test_arena_reset_allows_realloc);

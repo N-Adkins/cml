@@ -1,5 +1,6 @@
 #include "trainer.h"
 #include "context.h"
+#include "backend/backend.h"
 
 #include <cml/tape.h>
 #include <stdio.h>
@@ -57,18 +58,30 @@ void cml_trainer_fit(cml_context_t *ctx, cml_trainer_t *trainer,
                      size_t epochs, bool verbose) {
     if (ctx == NULL || trainer == NULL || x == NULL || y == NULL) return;
 
+    // Upload persistent tensors to device before taking the per-epoch device
+    // mark. Otherwise their lazy allocations land above the mark and get
+    // freed by cml_backend_device_rewind, leaving dangling device_data on
+    // the next epoch.
+    cml_backend_tensor_to_device(ctx, x);
+    cml_backend_tensor_to_device(ctx, y);
+    for (size_t i = 0; i < trainer->n_params; i++) {
+        cml_backend_tensor_to_device(ctx, trainer->params[i]);
+    }
+
     int width = 1;
     size_t tmp = epochs;
     while (tmp >= 10) { tmp /= 10; width++; }
 
     for (size_t epoch = 0; epoch < epochs; epoch++) {
         size_t arena_mark = cml_arena_mark(&ctx->arena);
+        void *device_mark = cml_backend_device_mark(ctx);
         if (ctx->status != CML_OK) break;
 
         cml_tensor_t *loss = trainer->loss_fn(ctx, trainer->model, x, y);
         if (loss == NULL) {
             cml_tape_clear(ctx);
             cml_arena_rewind(&ctx->arena, arena_mark);
+            cml_backend_device_rewind(ctx, device_mark);
             break;
         }
 
@@ -85,6 +98,7 @@ void cml_trainer_fit(cml_context_t *ctx, cml_trainer_t *trainer,
         cml_sgd_step(trainer->opt, trainer->params, trainer->n_params);
         cml_tape_clear(ctx);
         cml_arena_rewind(&ctx->arena, arena_mark);
+        cml_backend_device_rewind(ctx, device_mark);
     }
 
     if (verbose && trainer->has_loss) {

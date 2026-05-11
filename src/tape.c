@@ -1,8 +1,7 @@
 #include "tape.h"
+#include "backend/backend.h"
 #include "context.h"
 #include "tensor.h"
-
-#include <cblas.h>
 
 struct cml_tape_node_s {
     cml_tensor_t *output; // tensor produced by this op; owns the grad allocation
@@ -21,11 +20,7 @@ static void grad_accum_scaled(cml_context_t *ctx, cml_tensor_t *t,
         if (t->grad == NULL) return;
         cml_tensor_zero(t->grad);
     }
-    for (size_t r = 0; r < delta->rows; r++) {
-        cblas_saxpy((int)delta->cols, scale,
-                    delta->data + r * delta->stride, 1,
-                    t->grad->data + r * t->grad->stride, 1);
-    }
+    cml_backend_accum_scaled(ctx, t->grad, delta, scale);
 }
 
 static void backward_add(cml_context_t *ctx, struct cml_tape_node_s *node) {
@@ -64,28 +59,19 @@ static void backward_add_bias(cml_context_t *ctx, struct cml_tape_node_s *node) 
     if (b->requires_grad) {
         cml_tensor_t *gb = cml_tensor_init(ctx, 1, b->cols);
         if (gb == NULL) return;
-        cml_tensor_zero(gb);
-        /* sum incoming gradient over the batch dimension */
-        for (size_t r = 0; r < g->rows; r++) {
-            cblas_saxpy((int)g->cols, 1.0f,
-                        g->data + r * g->stride, 1,
-                        gb->data, 1);
-        }
+        if (cml_backend_sum_rows(ctx, gb, g) != CML_OK) return;
         grad_accum_scaled(ctx, b, gb, 1.0f);
     }
 }
 
-static void backward_log(cml_context_t *ctx, struct cml_tape_node_s *node) {
+static void backward_unary(cml_context_t *ctx, struct cml_tape_node_s *node) {
+    cml_unary_op_t op = *(cml_unary_op_t *)node->aux;
     cml_tensor_t *x = node->inputs[0];
-    cml_tensor_t *recip = cml_tensor_init(ctx, x->rows, x->cols);
-    if (recip == NULL) return;
-    for (size_t r = 0; r < x->rows; r++) {
-        for (size_t c = 0; c < x->cols; c++) {
-            float xv = cml_tensor_get(x, r, c);
-            cml_tensor_set(recip, r, c, xv != 0.0f ? 1.0f / xv : 0.0f);
-        }
-    }
-    grad_accum_scaled(ctx, x, cml_tensor_mul(ctx, node->output->grad, recip), 1.0f);
+    cml_tensor_t *g = node->output->grad;
+    cml_tensor_t *dg = cml_tensor_init(ctx, x->rows, x->cols);
+    if (dg == NULL) return;
+    if (cml_backend_unary_grad(ctx, dg, x, g, op) != CML_OK) return;
+    grad_accum_scaled(ctx, x, dg, 1.0f);
 }
 
 static void backward_dot(cml_context_t *ctx, struct cml_tape_node_s *node) {
@@ -111,36 +97,6 @@ static void backward_transpose(cml_context_t *ctx, struct cml_tape_node_s *node)
                       cml_tensor_transpose(ctx, node->output->grad), 1.0f);
 }
 
-static void backward_sigmoid(cml_context_t *ctx, struct cml_tape_node_s *node) {
-    cml_tensor_t *out = node->output;
-
-    cml_tensor_t *ones = cml_tensor_init(ctx, out->rows, out->cols);
-    if (ones == NULL) return;
-    cml_tensor_fill(ones, 1.0f);
-
-    cml_tensor_t *one_minus = cml_tensor_sub(ctx, ones, out);
-    if (one_minus == NULL) return;
-
-    cml_tensor_t *d = cml_tensor_mul(ctx, out, one_minus);
-    if (d == NULL) return;
-
-    grad_accum_scaled(ctx, node->inputs[0], cml_tensor_mul(ctx, out->grad, d), 1.0f);
-}
-
-static void backward_relu(cml_context_t *ctx, struct cml_tape_node_s *node) {
-    cml_tensor_t *x = node->inputs[0];
-    cml_tensor_t *mask = cml_tensor_init(ctx, x->rows, x->cols);
-    if (mask == NULL) return;
-
-    for (size_t r = 0; r < x->rows; r++) {
-        for (size_t c = 0; c < x->cols; c++) {
-            cml_tensor_set(mask, r, c,
-                           cml_tensor_get(x, r, c) > 0.0f ? 1.0f : 0.0f);
-        }
-    }
-
-    grad_accum_scaled(ctx, x, cml_tensor_mul(ctx, node->output->grad, mask), 1.0f);
-}
 
 static void backward_sum(cml_context_t *ctx, struct cml_tape_node_s *node) {
     cml_tensor_t *x = node->inputs[0];
@@ -245,27 +201,32 @@ void cml_tape_record_scale(cml_context_t *ctx, cml_tensor_t *out,
     tape_push(ctx, out, inputs, 1, backward_scale, aux);
 }
 
+static void record_unary(cml_context_t *ctx, cml_tensor_t *out,
+                         cml_tensor_t *tensor, cml_unary_op_t op) {
+    if (!needs_grad(ctx, tensor, NULL)) return;
+    cml_unary_op_t *aux = cml_arena_alloc(&ctx->arena, sizeof(cml_unary_op_t));
+    if (aux == NULL) {
+        cml_context_error(ctx, CML_OUT_OF_MEMORY, "tape aux allocation failed");
+        return;
+    }
+    *aux = op;
+    cml_tensor_t *inputs[] = {tensor};
+    tape_push(ctx, out, inputs, 1, backward_unary, aux);
+}
+
 void cml_tape_record_log(cml_context_t *ctx, cml_tensor_t *out,
                          cml_tensor_t *tensor) {
-    if (!needs_grad(ctx, tensor, NULL)) return;
-    cml_tensor_t *inputs[] = {tensor};
-    tape_push(ctx, out, inputs, 1, backward_log, NULL);
+    record_unary(ctx, out, tensor, CML_UNARY_LOG);
 }
 
 void cml_tape_record_sigmoid(cml_context_t *ctx, cml_tensor_t *out,
                               cml_tensor_t *tensor) {
-    if (!needs_grad(ctx, tensor, NULL)) return;
-
-    cml_tensor_t *inputs[] = {tensor};
-    tape_push(ctx, out, inputs, 1, backward_sigmoid, NULL);
+    record_unary(ctx, out, tensor, CML_UNARY_SIGMOID);
 }
 
 void cml_tape_record_relu(cml_context_t *ctx, cml_tensor_t *out,
                            cml_tensor_t *tensor) {
-    if (!needs_grad(ctx, tensor, NULL)) return;
-
-    cml_tensor_t *inputs[] = {tensor};
-    tape_push(ctx, out, inputs, 1, backward_relu, NULL);
+    record_unary(ctx, out, tensor, CML_UNARY_RELU);
 }
 
 void cml_tape_record_transpose(cml_context_t *ctx, cml_tensor_t *out,

@@ -4,11 +4,21 @@
 #include <cml/context.h>
 #include <stddef.h>
 
-// Very simple bump allocator
-typedef struct {
+typedef struct cml_arena_chunk_s {
     char *buffer;
     size_t capacity;
-    size_t offset;
+    size_t used;
+    struct cml_arena_chunk_s *next;
+} cml_arena_chunk_t;
+
+// Growing bump allocator: when an allocation would overflow the current
+// chunk, a new (larger) chunk is appended. Existing chunks are never
+// resized, so pointers returned by previous allocations remain valid until
+// reset/deinit.
+typedef struct {
+    cml_arena_chunk_t *head;
+    cml_arena_chunk_t *current;
+    size_t offset; // total bytes allocated across all chunks
 } cml_arena_t;
 
 cml_status_t cml_arena_init(cml_arena_t *arena, size_t capacity_bytes);

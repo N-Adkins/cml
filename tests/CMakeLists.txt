@@ -41,3 +41,7 @@ add_unity_test(test_sgd.c)
 add_unity_test(test_tape.c)
 add_unity_test(test_tensor.c)
 add_unity_test(test_trainer.c)
+
+if(CML_ENABLE_CUDA)
+    add_unity_test(test_cuda_parity.c)
+endif()

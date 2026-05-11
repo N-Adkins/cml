@@ -1,22 +1,16 @@
 #include "linear.h"
+#include "backend/backend.h"
 #include "context.h"
 #include "tensor.h"
 #include "tape.h"
 
-#include <cblas.h>
 #include <math.h>
 
 static cml_tensor_t *linear_add_bias(cml_context_t *ctx,
                                       cml_tensor_t *a, cml_tensor_t *b) {
     cml_tensor_t *out = cml_tensor_init(ctx, a->rows, a->cols);
     if (out == NULL) return NULL;
-
-    for (size_t r = 0; r < a->rows; r++) {
-        cblas_scopy((int)a->cols, a->data + r * a->stride, 1,
-                    out->data + r * out->stride, 1);
-        cblas_saxpy((int)a->cols, 1.0f, b->data, 1,
-                    out->data + r * out->stride, 1);
-    }
+    if (cml_backend_add_bias(ctx, out, a, b) != CML_OK) return NULL;
 
     cml_tape_record_add_bias(ctx, out, a, b);
     return out;

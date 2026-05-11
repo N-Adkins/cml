@@ -59,6 +59,25 @@ static void test_data_pointer_matches_get(void) {
     TEST_ASSERT_EQUAL_FLOAT(9.0f, d[1 * 3 + 2]);
 }
 
+static void test_const_data_pointer_matches_get(void) {
+    cml_tensor_t *t = cml_tensor_init(ctx, 2, 3);
+    cml_tensor_set(t, 0, 1, 7.0f);
+    cml_tensor_set(t, 1, 0, 4.0f);
+    const float *d = cml_tensor_const_data(t);
+    TEST_ASSERT_NOT_NULL(d);
+    TEST_ASSERT_EQUAL_FLOAT(7.0f, d[1]);
+    TEST_ASSERT_EQUAL_FLOAT(4.0f, d[3]);
+}
+
+static void test_sync_api_cpu_context(void) {
+    cml_tensor_t *t = cml_tensor_init(ctx, 2, 2);
+    cml_tensor_fill(t, 1.0f);
+    TEST_ASSERT_EQUAL(CML_BACKEND_CPU, cml_get_backend(ctx));
+    TEST_ASSERT_EQUAL(CML_OK, cml_tensor_to_device(ctx, t));
+    TEST_ASSERT_FALSE(cml_tensor_has_device_copy(t));
+    TEST_ASSERT_EQUAL(CML_OK, cml_tensor_to_host(ctx, t));
+}
+
 /* --- fill / zero / rand --- */
 
 static void test_zero_clears_all_elements(void) {
@@ -484,6 +503,8 @@ int main(void) {
 
     RUN_TEST(test_set_get_roundtrip);
     RUN_TEST(test_data_pointer_matches_get);
+    RUN_TEST(test_const_data_pointer_matches_get);
+    RUN_TEST(test_sync_api_cpu_context);
 
     RUN_TEST(test_zero_clears_all_elements);
     RUN_TEST(test_fill_sets_all_elements);

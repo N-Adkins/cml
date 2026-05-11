@@ -1,8 +1,8 @@
 #include "tensor.h"
 #include "context.h"
+#include "backend/backend.h"
 #include "tape.h"
 
-#include <cblas.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,10 +13,16 @@ static cml_tensor_t *tensor_alloc(cml_context_t *ctx, size_t rows, size_t cols) 
         cml_context_error(ctx, CML_OUT_OF_MEMORY, "tensor struct allocation failed");
         return NULL;
     }
+    t->ctx = ctx;
     t->rows = rows;
     t->cols = cols;
     t->stride = cols;
     t->data = NULL;
+    t->device_data = NULL;
+    t->storage = t;
+    t->data_offset = 0;
+    t->host_valid = true;
+    t->device_valid = false;
     t->grad = NULL;
     t->requires_grad = false;
     t->creator = NULL;
@@ -51,17 +57,48 @@ size_t cml_tensor_cols(const cml_tensor_t *tensor) {
 
 float cml_tensor_get(const cml_tensor_t *tensor, size_t row, size_t col) {
     if (tensor == NULL) return 0.0f;
+    if (tensor->ctx != NULL && cml_backend_tensor_to_host(tensor->ctx, tensor) != CML_OK) {
+        return 0.0f;
+    }
     return tensor->data[row * tensor->stride + col];
 }
 
 void cml_tensor_set(cml_tensor_t *tensor, size_t row, size_t col, float value) {
     if (tensor == NULL) return;
     tensor->data[row * tensor->stride + col] = value;
+    cml_backend_mark_host_write(tensor);
 }
 
 float *cml_tensor_data(cml_tensor_t *tensor) {
     if (tensor == NULL) return NULL;
+    if (tensor->ctx != NULL && cml_backend_tensor_to_host(tensor->ctx, tensor) != CML_OK) {
+        return NULL;
+    }
+    cml_backend_mark_host_write(tensor);
     return tensor->data;
+}
+
+const float *cml_tensor_const_data(const cml_tensor_t *tensor) {
+    if (tensor == NULL) return NULL;
+    if (tensor->ctx != NULL && cml_backend_tensor_to_host(tensor->ctx, tensor) != CML_OK) {
+        return NULL;
+    }
+    return tensor->data;
+}
+
+cml_status_t cml_tensor_to_host(cml_context_t *ctx, cml_tensor_t *tensor) {
+    if (ctx == NULL || tensor == NULL) return CML_INVALID_ARG;
+    return cml_backend_tensor_to_host(ctx, tensor);
+}
+
+cml_status_t cml_tensor_to_device(cml_context_t *ctx, cml_tensor_t *tensor) {
+    if (ctx == NULL || tensor == NULL) return CML_INVALID_ARG;
+    return cml_backend_tensor_to_device(ctx, tensor);
+}
+
+bool cml_tensor_has_device_copy(const cml_tensor_t *tensor) {
+    if (tensor == NULL) return false;
+    return cml_backend_tensor_has_device_copy(tensor);
 }
 
 void cml_tensor_zero(cml_tensor_t *tensor) {
@@ -70,6 +107,7 @@ void cml_tensor_zero(cml_tensor_t *tensor) {
     for (size_t r = 0; r < tensor->rows; r++) {
         memset(tensor->data + r * tensor->stride, 0, tensor->cols * sizeof(float));
     }
+    cml_backend_mark_host_write(tensor);
 }
 
 void cml_tensor_fill(cml_tensor_t *tensor, float value) {
@@ -81,6 +119,7 @@ void cml_tensor_fill(cml_tensor_t *tensor, float value) {
             row[c] = value;
         }
     }
+    cml_backend_mark_host_write(tensor);
 }
 
 void cml_tensor_rand(cml_tensor_t *tensor, float low, float high) {
@@ -93,6 +132,7 @@ void cml_tensor_rand(cml_tensor_t *tensor, float low, float high) {
             row[c] = low + range * ((float)rand() / (float)RAND_MAX);
         }
     }
+    cml_backend_mark_host_write(tensor);
 }
 
 void cml_tensor_copy(cml_context_t *ctx, cml_tensor_t *dst, const cml_tensor_t *src) {
@@ -107,10 +147,8 @@ void cml_tensor_copy(cml_context_t *ctx, cml_tensor_t *dst, const cml_tensor_t *
         return;
     }
 
-    for (size_t r = 0; r < src->rows; r++) {
-        cblas_scopy((int)src->cols,
-                    src->data + r * src->stride, 1,
-                    dst->data + r * dst->stride, 1);
+    if (cml_backend_copy(ctx, dst, src) != CML_OK) {
+        return;
     }
 }
 
@@ -134,6 +172,8 @@ cml_tensor_t *cml_tensor_reshape(cml_context_t *ctx, cml_tensor_t *tensor,
     cml_tensor_t *view = tensor_alloc(ctx, new_rows, new_cols);
     if (view == NULL) return NULL;
     view->data = tensor->data;
+    view->storage = tensor->storage;
+    view->data_offset = tensor->data_offset;
     return view;
 }
 
@@ -154,7 +194,9 @@ cml_tensor_t *cml_tensor_view(cml_context_t *ctx, cml_tensor_t *tensor,
     cml_tensor_t *view = tensor_alloc(ctx, rows, cols);
     if (view == NULL) return NULL;
     view->data = tensor->data + start_row * tensor->stride + start_col;
-    view->stride = tensor->stride; /* non-contiguous: rows remain parent-spaced */
+    view->stride = tensor->stride; // Non-contiguous: rows remain parent-spaced.
+    view->storage = tensor->storage;
+    view->data_offset = tensor->data_offset + start_row * tensor->stride + start_col;
     return view;
 }
 
@@ -169,11 +211,7 @@ cml_tensor_t *cml_tensor_scale(cml_context_t *ctx, cml_tensor_t *tensor, float s
     cml_tensor_t *out = cml_tensor_init(ctx, tensor->rows, tensor->cols);
     if (out == NULL) return NULL;
 
-    for (size_t r = 0; r < tensor->rows; r++) {
-        cblas_scopy((int)tensor->cols, tensor->data + r * tensor->stride, 1,
-                    out->data + r * out->stride, 1);
-        cblas_sscal((int)out->cols, scalar, out->data + r * out->stride, 1);
-    }
+    if (cml_backend_scale(ctx, out, tensor, scalar) != CML_OK) return NULL;
 
     cml_tape_record_scale(ctx, out, tensor, scalar);
     return out;
@@ -190,13 +228,7 @@ cml_tensor_t *cml_tensor_sigmoid(cml_context_t *ctx, cml_tensor_t *tensor) {
     cml_tensor_t *out = cml_tensor_init(ctx, tensor->rows, tensor->cols);
     if (out == NULL) return NULL;
 
-    for (size_t r = 0; r < tensor->rows; r++) {
-        const float *src = tensor->data + r * tensor->stride;
-        float *dst = out->data + r * out->stride;
-        for (size_t c = 0; c < tensor->cols; c++) {
-            dst[c] = 1.0f / (1.0f + expf(-src[c]));
-        }
-    }
+    if (cml_backend_unary(ctx, out, tensor, CML_UNARY_SIGMOID) != CML_OK) return NULL;
 
     cml_tape_record_sigmoid(ctx, out, tensor);
     return out;
@@ -213,13 +245,7 @@ cml_tensor_t *cml_tensor_relu(cml_context_t *ctx, cml_tensor_t *tensor) {
     cml_tensor_t *out = cml_tensor_init(ctx, tensor->rows, tensor->cols);
     if (out == NULL) return NULL;
 
-    for (size_t r = 0; r < tensor->rows; r++) {
-        const float *src = tensor->data + r * tensor->stride;
-        float *dst = out->data + r * out->stride;
-        for (size_t c = 0; c < tensor->cols; c++) {
-            dst[c] = src[c] > 0.0f ? src[c] : 0.0f;
-        }
-    }
+    if (cml_backend_unary(ctx, out, tensor, CML_UNARY_RELU) != CML_OK) return NULL;
 
     cml_tape_record_relu(ctx, out, tensor);
     return out;
@@ -236,13 +262,7 @@ cml_tensor_t *cml_tensor_log(cml_context_t *ctx, cml_tensor_t *tensor) {
     cml_tensor_t *out = cml_tensor_init(ctx, tensor->rows, tensor->cols);
     if (out == NULL) return NULL;
 
-    for (size_t r = 0; r < tensor->rows; r++) {
-        const float *src = tensor->data + r * tensor->stride;
-        float *dst = out->data + r * out->stride;
-        for (size_t c = 0; c < tensor->cols; c++) {
-            dst[c] = logf(src[c]);
-        }
-    }
+    if (cml_backend_unary(ctx, out, tensor, CML_UNARY_LOG) != CML_OK) return NULL;
 
     cml_tape_record_log(ctx, out, tensor);
     return out;
@@ -258,12 +278,7 @@ static cml_tensor_t *tensor_add_scaled(cml_context_t *ctx,
     cml_tensor_t *out = cml_tensor_init(ctx, a->rows, a->cols);
     if (out == NULL) return NULL;
 
-    for (size_t r = 0; r < a->rows; r++) {
-        cblas_scopy((int)a->cols, a->data + r * a->stride, 1,
-                    out->data + r * out->stride, 1);
-        cblas_saxpy((int)a->cols, alpha, b->data + r * b->stride, 1,
-                    out->data + r * out->stride, 1);
-    }
+    if (cml_backend_add_scaled(ctx, out, a, b, alpha) != CML_OK) return NULL;
 
     return out;
 }
@@ -309,14 +324,7 @@ cml_tensor_t *cml_tensor_mul(cml_context_t *ctx, cml_tensor_t *a, cml_tensor_t *
     cml_tensor_t *out = cml_tensor_init(ctx, a->rows, a->cols);
     if (out == NULL) return NULL;
 
-    for (size_t r = 0; r < a->rows; r++) {
-        const float *ar = a->data + r * a->stride;
-        const float *br = b->data + r * b->stride;
-        float *dr = out->data + r * out->stride;
-        for (size_t c = 0; c < a->cols; c++) {
-            dr[c] = ar[c] * br[c];
-        }
-    }
+    if (cml_backend_mul(ctx, out, a, b) != CML_OK) return NULL;
 
     cml_tape_record_mul(ctx, out, a, b);
     return out;
@@ -337,13 +345,7 @@ cml_tensor_t *cml_tensor_dot(cml_context_t *ctx, cml_tensor_t *a, cml_tensor_t *
     cml_tensor_t *out = cml_tensor_init(ctx, a->rows, b->cols);
     if (out == NULL) return NULL;
 
-    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-                (int)a->rows, (int)b->cols, (int)a->cols,
-                1.0f,
-                a->data, (int)a->stride,
-                b->data, (int)b->stride,
-                0.0f,
-                out->data, (int)out->stride);
+    if (cml_backend_dot(ctx, out, a, b) != CML_OK) return NULL;
 
     cml_tape_record_dot(ctx, out, a, b);
     return out;
@@ -360,11 +362,7 @@ cml_tensor_t *cml_tensor_transpose(cml_context_t *ctx, cml_tensor_t *tensor) {
     cml_tensor_t *out = cml_tensor_init(ctx, tensor->cols, tensor->rows);
     if (out == NULL) return NULL;
 
-    for (size_t r = 0; r < tensor->rows; r++) {
-        for (size_t c = 0; c < tensor->cols; c++) {
-            out->data[c * out->stride + r] = tensor->data[r * tensor->stride + c];
-        }
-    }
+    if (cml_backend_transpose(ctx, out, tensor) != CML_OK) return NULL;
 
     cml_tape_record_transpose(ctx, out, tensor);
     return out;
@@ -382,14 +380,9 @@ cml_tensor_t *cml_tensor_sum(cml_context_t *ctx, cml_tensor_t *tensor) {
     if (out == NULL) return NULL;
 
     float total = 0.0f;
-    for (size_t r = 0; r < tensor->rows; r++) {
-        const float *row = tensor->data + r * tensor->stride;
-        for (size_t c = 0; c < tensor->cols; c++) {
-            total += row[c];
-        }
-    }
-
+    if (cml_backend_sum(ctx, tensor, &total) != CML_OK) return NULL;
     out->data[0] = total;
+    cml_backend_mark_host_write(out);
     cml_tape_record_sum(ctx, out, tensor);
     return out;
 }
