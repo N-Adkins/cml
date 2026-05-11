@@ -4,6 +4,7 @@ if(CML_BUILD_EXAMPLES)
         target_link_libraries(${name} PRIVATE cml)
         cml_apply_warnings(${name})
         cml_apply_sanitizers(${name})
+        cml_stage_runtime_dlls(${name})
     endfunction()
 
     add_example(linear_regression)

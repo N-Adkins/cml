@@ -13,6 +13,7 @@ cml_linear_t *cml_linear_init(cml_context_t *ctx, size_t in_features, size_t out
 // Computes x @ W + b. x must be [batch x in_features]; returns [batch x out_features].
 cml_tensor_t *cml_linear_forward(cml_context_t *ctx, cml_linear_t *layer, cml_tensor_t *x);
 
+// Accesors
 cml_tensor_t *cml_linear_weight(const cml_linear_t *layer);
 cml_tensor_t *cml_linear_bias(const cml_linear_t *layer);
 

@@ -6,6 +6,7 @@
 
 typedef struct cml_sgd_s cml_sgd_t;
 
+// Initialize stochastic gradient descent
 cml_sgd_t *cml_sgd_init(cml_context_t *ctx, float lr);
 
 // Applies param -= lr * grad for each param that has a gradient.

@@ -146,6 +146,19 @@ function(cml_apply_sanitizers target)
     endif()
 endfunction()
 
+# Stage transitive runtime DLLs (e.g. cudart, cublas) next to the exe on Windows
+# so users don't need cudart64_XX.dll on PATH to run tests/examples.
+function(cml_stage_runtime_dlls target)
+    if(NOT WIN32)
+        return()
+    endif()
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:${target}> $<TARGET_FILE_DIR:${target}>
+        COMMAND_EXPAND_LISTS
+    )
+endfunction()
+
 add_library(cml STATIC)
 add_library(cml::cml ALIAS cml)
 
