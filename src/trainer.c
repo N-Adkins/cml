@@ -4,6 +4,22 @@
 #include <cml/tape.h>
 #include <stdio.h>
 
+#define CML_TRAINER_PROGRESS_BAR_WIDTH 28
+
+// Handles the whole progress bar and everything
+static void cml_trainer_print_progress(size_t epoch, size_t epochs, int width, float loss_val) {
+    double progress = (epochs > 0) ? (double)epoch / (double)epochs : 1.0;
+    size_t filled = (size_t)(progress * CML_TRAINER_PROGRESS_BAR_WIDTH);
+    if (filled > CML_TRAINER_PROGRESS_BAR_WIDTH) filled = CML_TRAINER_PROGRESS_BAR_WIDTH;
+
+    printf("\rEpoch %*zu/%zu [", width, epoch, epochs);
+    for (size_t i = 0; i < CML_TRAINER_PROGRESS_BAR_WIDTH; i++) {
+        putchar(i < filled ? '=' : '-');
+    }
+    printf("] %6.2f%%  loss: %.6f", progress * 100.0, (double)loss_val);
+    fflush(stdout);
+}
+
 cml_trainer_t *cml_trainer_init(cml_context_t *ctx,
                                  void *model,
                                  cml_loss_fn loss_fn,
@@ -29,6 +45,9 @@ cml_trainer_t *cml_trainer_init(cml_context_t *ctx,
     trainer->n_params = n_params;
     trainer->opt      = cml_sgd_init(ctx, lr);
     if (trainer->opt == NULL) return NULL;
+    trainer->last_loss = 0.0f;
+    trainer->last_epoch = 0;
+    trainer->has_loss = false;
 
     return trainer;
 }
@@ -54,15 +73,22 @@ void cml_trainer_fit(cml_context_t *ctx, cml_trainer_t *trainer,
         }
 
         float loss_val = cml_tensor_get(loss, 0, 0);
+        trainer->last_loss = loss_val;
+        trainer->last_epoch = epoch + 1;
+        trainer->has_loss = true;
 
         if (verbose) {
-            printf("Epoch %*zu/%zu  loss: %f\n", width, epoch + 1, epochs, (double)loss_val);
-            fflush(stdout);
+            cml_trainer_print_progress(epoch + 1, epochs, width, loss_val);
         }
 
         cml_backward(ctx, loss);
         cml_sgd_step(trainer->opt, trainer->params, trainer->n_params);
         cml_tape_clear(ctx);
         cml_arena_rewind(&ctx->arena, arena_mark);
+    }
+
+    if (verbose && trainer->has_loss) {
+        cml_trainer_print_progress(trainer->last_epoch, epochs, width, trainer->last_loss);
+        printf("  final\n");
     }
 }
