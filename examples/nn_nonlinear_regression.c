@@ -1,6 +1,7 @@
 #include <cml/cml.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 /*
  * Learns a highly nonlinear scalar function:
@@ -56,7 +57,7 @@ int main(void) {
     model_t model = { cml_nn_sequential(ctx, layers, 11) };
 
     const size_t n_params = cml_module_param_count(model.net);
-    cml_tensor_t *params[n_params];
+    cml_tensor_t *params = malloc(sizeof(cml_tensor_t) * n_params);;
     cml_module_collect_params(model.net, params, 0);
 
     cml_trainer_t *trainer = cml_trainer_init(ctx, &model, forward, params, n_params, 0.1f);
@@ -72,6 +73,8 @@ int main(void) {
         float y = cml_tensor_get(y_train, i, 0);
         printf("%8.4f  %8.4f  %8.4f\n", (double)x, (double)p, (double)y);
     }
+    
+    free(params);
 
     cml_deinit(ctx);
     return 0;
