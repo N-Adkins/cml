@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.21)
 
 project(cml VERSION 0.1.0 LANGUAGES C)
 
+include(CTest)
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile_commands.json" FORCE)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -25,6 +27,8 @@ if(BLAS_FOUND)
         message(FATAL_ERROR "CBLAS header (cblas.h) not found. Install a BLAS provider with CBLAS support.")
     endif()
 elseif(CML_FETCH_OPENBLAS)
+    set(PRIOR_BUILD_TESTING ${BUILD_TESTING})
+
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
     set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
     set(NOFORTRAN ON CACHE BOOL "" FORCE)
@@ -38,6 +42,8 @@ elseif(CML_FETCH_OPENBLAS)
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
     FetchContent_MakeAvailable(openblas)
+
+    set(BUILD_TESTING ${PRIOR_BUILD_TESTING} CACHE BOOL "" FORCE)
 
     if(TARGET openblas)
         set(CML_BLAS_TARGET openblas)
@@ -88,7 +94,7 @@ function(cml_apply_sanitizers target)
     endif()
 endfunction()
 
-add_library(cml STATIC src/cml.c)
+add_library(cml STATIC)
 add_library(cml::cml ALIAS cml)
 
 target_include_directories(
@@ -106,7 +112,8 @@ target_link_libraries(cml PUBLIC ${CML_BLAS_TARGET})
 cml_apply_warnings(cml)
 cml_apply_sanitizers(cml)
 
-include(CTest)
+add_subdirectory(src)
+
 if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()

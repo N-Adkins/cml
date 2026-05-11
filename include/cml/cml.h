@@ -1,6 +1,8 @@
 #ifndef CML_CML_H
 #define CML_CML_H
 
-void init(void);
+#include "context.h"
+#include "status.h"
+#include "tensor.h"
 
 #endif
