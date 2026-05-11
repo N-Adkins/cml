@@ -11,4 +11,6 @@ struct cml_context_s {
     const char *error_msg;
 };
 
+void cml_context_error(cml_context_t *ctx, cml_status_t status, const char *error_msg);
+
 #endif

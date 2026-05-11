@@ -33,3 +33,14 @@ const char *cml_get_error_msg(cml_context_t *ctx) {
     }
     return ctx->error_msg;
 }
+
+void cml_context_error(cml_context_t *ctx, cml_status_t status, const char *error_msg) {
+    if (ctx->status != CML_OK) {
+        // For now, we won't allow errors overwriting other ones - the logic being
+        // that the program is already in an invalid state.
+        return;
+    }
+
+    ctx->status = status;
+    ctx->error_msg = error_msg;
+}
