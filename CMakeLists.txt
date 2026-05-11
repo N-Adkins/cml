@@ -134,7 +134,11 @@ target_compile_features(cml PUBLIC c_std_99)
 if(CML_CBLAS_INCLUDE_DIR)
     target_include_directories(cml SYSTEM PRIVATE ${CML_CBLAS_INCLUDE_DIR})
 endif()
-target_link_libraries(cml PUBLIC ${CML_BLAS_TARGET} PRIVATE m)
+
+target_link_libraries(cml PUBLIC ${CML_BLAS_TARGET})
+if (NOT WIN32)
+    target_link_libraries(cml PRIVATE m)
+endif()
 
 cml_apply_warnings(cml)
 cml_apply_sanitizers(cml)
