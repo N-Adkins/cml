@@ -231,6 +231,18 @@ static void test_backward_relu(void) {
     TEST_ASSERT_FLOAT_WITHIN(DELTA, 1.0f, cml_tensor_get(cml_tensor_grad(a), 0, 1));
 }
 
+static void test_backward_log(void) {
+    /* a = [[2, 4]]; loss = sum(log(a)); grad_a = [[1/2, 1/4]] = [[0.5, 0.25]] */
+    cml_tensor_t *a = cml_tensor_init(ctx, 1, 2);
+    cml_tensor_set(a, 0, 0, 2.0f);
+    cml_tensor_set(a, 0, 1, 4.0f);
+    cml_tensor_set_requires_grad(a, true);
+    cml_tensor_t *loss = cml_tensor_sum(ctx, cml_tensor_log(ctx, a));
+    cml_backward(ctx, loss);
+    TEST_ASSERT_FLOAT_WITHIN(DELTA, 0.5f,  cml_tensor_get(cml_tensor_grad(a), 0, 0));
+    TEST_ASSERT_FLOAT_WITHIN(DELTA, 0.25f, cml_tensor_get(cml_tensor_grad(a), 0, 1));
+}
+
 static void test_backward_relu_all_negative(void) {
     cml_tensor_t *a = cml_tensor_init(ctx, 1, 3);
     cml_tensor_fill(a, -5.0f);
@@ -402,6 +414,7 @@ int main(void) {
     RUN_TEST(test_backward_scale);
     RUN_TEST(test_backward_dot);
     RUN_TEST(test_backward_transpose);
+    RUN_TEST(test_backward_log);
     RUN_TEST(test_backward_sigmoid);
     RUN_TEST(test_backward_relu);
     RUN_TEST(test_backward_relu_all_negative);

@@ -34,6 +34,7 @@ cml_tensor_t *cml_tensor_view(cml_context_t *ctx, cml_tensor_t *tensor, size_t s
 // Unary operators
 
 cml_tensor_t *cml_tensor_scale(cml_context_t *ctx, cml_tensor_t *tensor, float scalar);
+cml_tensor_t *cml_tensor_log(cml_context_t *ctx, cml_tensor_t *tensor);
 cml_tensor_t *cml_tensor_sigmoid(cml_context_t *ctx, cml_tensor_t *tensor);
 cml_tensor_t *cml_tensor_relu(cml_context_t *ctx, cml_tensor_t *tensor);
 

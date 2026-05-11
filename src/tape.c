@@ -54,6 +54,19 @@ static void backward_scale(cml_context_t *ctx, struct cml_tape_node_s *node) {
     grad_accum_scaled(ctx, node->inputs[0], node->output->grad, *(float *)node->aux);
 }
 
+static void backward_log(cml_context_t *ctx, struct cml_tape_node_s *node) {
+    cml_tensor_t *x = node->inputs[0];
+    cml_tensor_t *recip = cml_tensor_init(ctx, x->rows, x->cols);
+    if (recip == NULL) return;
+    for (size_t r = 0; r < x->rows; r++) {
+        for (size_t c = 0; c < x->cols; c++) {
+            float xv = cml_tensor_get(x, r, c);
+            cml_tensor_set(recip, r, c, xv != 0.0f ? 1.0f / xv : 0.0f);
+        }
+    }
+    grad_accum_scaled(ctx, x, cml_tensor_mul(ctx, node->output->grad, recip), 1.0f);
+}
+
 static void backward_dot(cml_context_t *ctx, struct cml_tape_node_s *node) {
     cml_tensor_t *a = node->inputs[0];
     cml_tensor_t *b = node->inputs[1];
@@ -202,6 +215,13 @@ void cml_tape_record_scale(cml_context_t *ctx, cml_tensor_t *out,
 
     cml_tensor_t *inputs[] = {tensor};
     tape_push(ctx, out, inputs, 1, backward_scale, aux);
+}
+
+void cml_tape_record_log(cml_context_t *ctx, cml_tensor_t *out,
+                         cml_tensor_t *tensor) {
+    if (!needs_grad(ctx, tensor, NULL)) return;
+    cml_tensor_t *inputs[] = {tensor};
+    tape_push(ctx, out, inputs, 1, backward_log, NULL);
 }
 
 void cml_tape_record_sigmoid(cml_context_t *ctx, cml_tensor_t *out,

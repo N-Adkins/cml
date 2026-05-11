@@ -225,6 +225,29 @@ cml_tensor_t *cml_tensor_relu(cml_context_t *ctx, cml_tensor_t *tensor) {
     return out;
 }
 
+cml_tensor_t *cml_tensor_log(cml_context_t *ctx, cml_tensor_t *tensor) {
+    if (ctx == NULL) return NULL;
+    if (ctx->status != CML_OK) return NULL;
+    if (tensor == NULL) {
+        cml_context_error(ctx, CML_INVALID_ARG, "tensor is NULL");
+        return NULL;
+    }
+
+    cml_tensor_t *out = cml_tensor_init(ctx, tensor->rows, tensor->cols);
+    if (out == NULL) return NULL;
+
+    for (size_t r = 0; r < tensor->rows; r++) {
+        const float *src = tensor->data + r * tensor->stride;
+        float *dst = out->data + r * out->stride;
+        for (size_t c = 0; c < tensor->cols; c++) {
+            dst[c] = logf(src[c]);
+        }
+    }
+
+    cml_tape_record_log(ctx, out, tensor);
+    return out;
+}
+
 static cml_tensor_t *tensor_add_scaled(cml_context_t *ctx,
                                         cml_tensor_t *a, cml_tensor_t *b, float alpha) {
     if (a->rows != b->rows || a->cols != b->cols) {

@@ -404,6 +404,43 @@ static void test_relu_does_not_modify_original(void) {
     TEST_ASSERT_EQUAL_FLOAT(-1.0f, cml_tensor_get(t, 0, 0));
 }
 
+/* --- log --- */
+
+static void test_log_known_values(void) {
+    cml_tensor_t *t = cml_tensor_init(ctx, 1, 3);
+    cml_tensor_set(t, 0, 0, 1.0f);   /* log(1) = 0         */
+    cml_tensor_set(t, 0, 1, 2.0f);   /* log(2) ≈ 0.6931    */
+    cml_tensor_set(t, 0, 2, 4.0f);   /* log(4) ≈ 1.3863    */
+    cml_tensor_t *r = cml_tensor_log(ctx, t);
+    TEST_ASSERT_NOT_NULL(r);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.0f,      cml_tensor_get(r, 0, 0));
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.693147f, cml_tensor_get(r, 0, 1));
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.386294f, cml_tensor_get(r, 0, 2));
+}
+
+static void test_log_output_shape_matches_input(void) {
+    cml_tensor_t *t = cml_tensor_init(ctx, 3, 4);
+    cml_tensor_fill(t, 1.0f);
+    cml_tensor_t *r = cml_tensor_log(ctx, t);
+    TEST_ASSERT_NOT_NULL(r);
+    TEST_ASSERT_EQUAL_size_t(3, cml_tensor_rows(r));
+    TEST_ASSERT_EQUAL_size_t(4, cml_tensor_cols(r));
+}
+
+static void test_log_does_not_modify_original(void) {
+    cml_tensor_t *t = cml_tensor_init(ctx, 1, 2);
+    cml_tensor_set(t, 0, 0, 2.0f);
+    cml_tensor_set(t, 0, 1, 4.0f);
+    cml_tensor_log(ctx, t);
+    TEST_ASSERT_EQUAL_FLOAT(2.0f, cml_tensor_get(t, 0, 0));
+    TEST_ASSERT_EQUAL_FLOAT(4.0f, cml_tensor_get(t, 0, 1));
+}
+
+static void test_log_null_tensor_errors(void) {
+    TEST_ASSERT_NULL(cml_tensor_log(ctx, NULL));
+    TEST_ASSERT_EQUAL(CML_INVALID_ARG, cml_get_status(ctx));
+}
+
 /* --- ctx error propagation --- */
 
 static void test_errored_ctx_short_circuits(void) {
@@ -488,6 +525,11 @@ int main(void) {
     RUN_TEST(test_sigmoid_range);
     RUN_TEST(test_relu_zeroes_negatives);
     RUN_TEST(test_relu_does_not_modify_original);
+
+    RUN_TEST(test_log_known_values);
+    RUN_TEST(test_log_output_shape_matches_input);
+    RUN_TEST(test_log_does_not_modify_original);
+    RUN_TEST(test_log_null_tensor_errors);
 
     RUN_TEST(test_errored_ctx_short_circuits);
     RUN_TEST(test_dot_through_view);
