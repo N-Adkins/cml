@@ -11,8 +11,8 @@ cml_tensor_t *cml_tensor_init(cml_context_t *ctx, size_t rows, size_t cols);
 
 // Accessors
 
-void cml_tensor_rows(const cml_tensor_t *tensor);
-void cml_tensor_cols(const cml_tensor_t *tensor);
+size_t cml_tensor_rows(const cml_tensor_t *tensor);
+size_t cml_tensor_cols(const cml_tensor_t *tensor);
 float cml_tensor_get(const cml_tensor_t *tensor, size_t row, size_t col);
 void cml_tensor_set(cml_tensor_t *tensor, size_t row, size_t col, float value);
 float *cml_tensor_data(cml_tensor_t *tensor);
@@ -22,19 +22,19 @@ float *cml_tensor_data(cml_tensor_t *tensor);
 void cml_tensor_zero(cml_tensor_t *tensor);
 void cml_tensor_fill(cml_tensor_t *tensor, float value);
 void cml_tensor_rand(cml_tensor_t *tensor, float low, float high);
-void cml_tensor_copy(cml_tensor_t *dst, const cml_tensor_t *src);
+void cml_tensor_copy(cml_context_t *ctx, cml_tensor_t *dst, const cml_tensor_t *src);
 
 // Views
 
-cml_tensor_t *cml_tensor_reshape(cml_tensor_t *tensor, size_t new_rows, size_t new_cols);
-cml_tensor_t *cml_tensor_view(cml_tensor_t *tensor, size_t start_row, size_t start_col,
+cml_tensor_t *cml_tensor_reshape(cml_context_t *ctx, cml_tensor_t *tensor, size_t new_rows, size_t new_cols);
+cml_tensor_t *cml_tensor_view(cml_context_t *ctx, cml_tensor_t *tensor, size_t start_row, size_t start_col,
                               size_t rows, size_t cols);
 
 // Unary operators
 
 cml_tensor_t *cml_tensor_scale(cml_context_t *ctx, cml_tensor_t *tensor, float scalar);
-float cml_tensor_sigmoid(cml_context_t *ctx, cml_tensor_t *tensor);
-float cml_tensor_relu(cml_context_t *ctx, cml_tensor_t *tensor);
+cml_tensor_t *cml_tensor_sigmoid(cml_context_t *ctx, cml_tensor_t *tensor);
+cml_tensor_t *cml_tensor_relu(cml_context_t *ctx, cml_tensor_t *tensor);
 
 // Binary operators
 

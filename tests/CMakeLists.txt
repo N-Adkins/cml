@@ -34,3 +34,4 @@ macro(add_unity_test file_name)
 endmacro()
 
 add_unity_test(test_context.c)
+add_unity_test(test_tensor.c)

@@ -17,13 +17,42 @@ include(FetchContent)
 find_package(BLAS QUIET)
 
 set(CML_BLAS_TARGET "")
-set(CML_CBLAS_INCLUDE_DIR "")
 if(BLAS_FOUND)
     set(CML_BLAS_TARGET BLAS::BLAS)
+
+    # Derive candidate include dirs from the BLAS library path (e.g. /usr/lib64 -> /usr/include)
+    list(GET BLAS_LIBRARIES 0 _cml_blas_lib)
+    get_filename_component(_cml_blas_lib_dir "${_cml_blas_lib}" DIRECTORY)
+
+    # Clear any stale cached result before searching
+    unset(CML_CBLAS_INCLUDE_DIR)
+    unset(CML_CBLAS_INCLUDE_DIR CACHE)
+
+    # Search adjacent to the BLAS library first (handles non-default prefixes)
     find_path(CML_CBLAS_INCLUDE_DIR
         NAMES cblas.h
-        PATH_SUFFIXES openblas atlas blas
+        PATHS
+            "${_cml_blas_lib_dir}/../include/openblas"
+            "${_cml_blas_lib_dir}/../include/atlas"
+            "${_cml_blas_lib_dir}/../include/blas"
+            "${_cml_blas_lib_dir}/../include"
+        NO_DEFAULT_PATH
     )
+
+    # Fall back to system-wide search
+    if(NOT CML_CBLAS_INCLUDE_DIR)
+        unset(CML_CBLAS_INCLUDE_DIR CACHE)
+        find_path(CML_CBLAS_INCLUDE_DIR
+            NAMES cblas.h
+            PATH_SUFFIXES openblas atlas blas ""
+        )
+    endif()
+
+    if(NOT CML_CBLAS_INCLUDE_DIR)
+        message(FATAL_ERROR
+            "System BLAS was found (${BLAS_LIBRARIES}) but cblas.h was not found. "
+            "Install the BLAS development headers (e.g. openblas-devel).")
+    endif()
 elseif(CML_FETCH_OPENBLAS)
     set(PRIOR_BUILD_TESTING ${BUILD_TESTING})
 
