@@ -82,7 +82,10 @@ After configuring and building, run:
 ctest --test-dir build --output-on-failure
 ```
 
-Testing is wired through CTest, with a basic framework setup using `FetchContent`.
+Testing is wired through CTest, with a basic framework setup called [Unity](https://github.com/ThrowTheSwitch/Unity/).
+
+This may be swapped in the future because it doesn't have many features as its target is embedded platforms, but
+it provides everything currently needed.
 
 ## CI
 
