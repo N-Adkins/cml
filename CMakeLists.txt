@@ -12,20 +12,18 @@ set(CMAKE_C_EXTENSIONS OFF)
 option(CML_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" ON)
 option(CML_FETCH_OPENBLAS "Fetch OpenBLAS when no system BLAS is found" ON)
 
-include(CheckIncludeFile)
 include(FetchContent)
 
-set(BLA_STATIC ON)
-find_package(BLAS QUIET)
+find_package(BLAS REQUIRED)
 
 set(CML_BLAS_TARGET "")
 set(CML_CBLAS_INCLUDE_DIR "")
 if(BLAS_FOUND)
     set(CML_BLAS_TARGET BLAS::BLAS)
-    check_include_file(cblas.h CML_HAVE_CBLAS_H)
-    if(NOT CML_HAVE_CBLAS_H)
-        message(FATAL_ERROR "CBLAS header (cblas.h) not found. Install a BLAS provider with CBLAS support.")
-    endif()
+    find_path(CML_CBLAS_INCLUDE_DIR
+        NAMES cblas.h
+        PATH_SUFFIXES openblas atlas blas
+    )
 elseif(CML_FETCH_OPENBLAS)
     set(PRIOR_BUILD_TESTING ${BUILD_TESTING})
 
