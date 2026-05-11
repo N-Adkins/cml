@@ -6,7 +6,6 @@
 /*
  * Learns a highly nonlinear scalar function:
  *   f(x) = 0.15*x^3 + 0.60*sin(3x) - 0.35*cos(5x)
- * using a small MLP: Linear(1,32) -> ReLU -> Linear(32,32) -> ReLU -> Linear(32,1).
  */
 
 typedef struct {
