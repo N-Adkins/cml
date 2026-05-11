@@ -58,7 +58,7 @@ int main(void) {
     cml_module_collect_params(model.net, params, 0);
 
     cml_trainer_t *trainer = cml_trainer_init(ctx, &model, forward, params, n_params, 0.1f);
-    cml_trainer_fit(ctx, trainer, x_train, y_train, 2000, true);
+    cml_trainer_fit(ctx, trainer, x_train, y_train, 5000, true);
 
     cml_tensor_t *pred = cml_module_forward(ctx, model.net, x_train);
 
