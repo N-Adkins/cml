@@ -33,6 +33,7 @@ static cml_status_t register_device_allocation(cml_context_t *ctx, float *ptr) {
 static cml_status_t ensure_device_allocated(cml_context_t *ctx, cml_tensor_t *storage) {
     if (storage->device_data != NULL) return CML_OK;
     if (ctx->backend_ops->alloc_device == NULL) return CML_INVALID_ARG;
+    if (storage_elements(storage) == 0) return CML_OK; // nothing to allocate
 
     float *device_ptr = NULL;
     cml_status_t status = ctx->backend_ops->alloc_device(
@@ -123,11 +124,12 @@ bool cml_backend_cuda_compiled(void) {
 cml_status_t cml_backend_init(cml_context_t *ctx, cml_backend_t backend) {
     if (ctx == NULL) return CML_INVALID_ARG;
 
+    const cml_backend_ops_t *ops;
     if (backend == CML_BACKEND_CPU) {
-        ctx->backend_ops = &cml_cpu_backend_ops;
+        ops = &cml_cpu_backend_ops;
     } else if (backend == CML_BACKEND_CUDA) {
 #ifdef CML_ENABLE_CUDA
-        ctx->backend_ops = &cml_cuda_backend_ops;
+        ops = &cml_cuda_backend_ops;
 #else
         set_backend_error(ctx, CML_BACKEND_UNAVAILABLE, "CUDA backend was not compiled in");
         return CML_BACKEND_UNAVAILABLE;
@@ -137,15 +139,19 @@ cml_status_t cml_backend_init(cml_context_t *ctx, cml_backend_t backend) {
         return CML_INVALID_ARG;
     }
 
-    ctx->backend_kind = backend;
-    ctx->backend_state = NULL;
-    ctx->device_allocs = NULL;
-
-    cml_status_t status = ctx->backend_ops->init(&ctx->backend_state);
+    void *state = NULL;
+    cml_status_t status = ops->init(&state);
     if (status != CML_OK) {
         set_backend_error(ctx, status, "backend initialization failed");
         return status;
     }
+
+    // Publish ops/state only after init succeeds so the deinit path can rely on
+    // backend_ops == NULL meaning "no initialized backend".
+    ctx->backend_ops = ops;
+    ctx->backend_state = state;
+    ctx->backend_kind = backend;
+    ctx->device_allocs = NULL;
     return CML_OK;
 }
 
@@ -219,6 +225,8 @@ bool cml_backend_tensor_has_device_copy(const cml_tensor_t *tensor) {
 }
 
 cml_status_t cml_backend_copy(cml_context_t *ctx, cml_tensor_t *dst, const cml_tensor_t *src) {
+    if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
+    if (ctx->status != CML_OK) return ctx->status;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, src);
@@ -251,6 +259,8 @@ fail:
 
 cml_status_t cml_backend_add_scaled(cml_context_t *ctx, cml_tensor_t *out,
                                     const cml_tensor_t *a, const cml_tensor_t *b, float alpha) {
+    if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
+    if (ctx->status != CML_OK) return ctx->status;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, a);
@@ -288,6 +298,8 @@ fail:
 
 cml_status_t cml_backend_mul(cml_context_t *ctx, cml_tensor_t *out,
                              const cml_tensor_t *a, const cml_tensor_t *b) {
+    if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
+    if (ctx->status != CML_OK) return ctx->status;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, a);
@@ -325,6 +337,8 @@ fail:
 
 cml_status_t cml_backend_scale(cml_context_t *ctx, cml_tensor_t *out,
                                const cml_tensor_t *in, float scalar) {
+    if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
+    if (ctx->status != CML_OK) return ctx->status;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, in);
@@ -357,6 +371,8 @@ fail:
 
 cml_status_t cml_backend_dot(cml_context_t *ctx, cml_tensor_t *out,
                              const cml_tensor_t *a, const cml_tensor_t *b) {
+    if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
+    if (ctx->status != CML_OK) return ctx->status;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, a);
@@ -393,6 +409,8 @@ fail:
 }
 
 cml_status_t cml_backend_transpose(cml_context_t *ctx, cml_tensor_t *out, const cml_tensor_t *in) {
+    if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
+    if (ctx->status != CML_OK) return ctx->status;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, in);
@@ -424,6 +442,8 @@ fail:
 }
 
 cml_status_t cml_backend_sum(cml_context_t *ctx, const cml_tensor_t *in, float *out) {
+    if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
+    if (ctx->status != CML_OK) return ctx->status;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, in);
@@ -445,6 +465,8 @@ cml_status_t cml_backend_sum(cml_context_t *ctx, const cml_tensor_t *in, float *
 
 cml_status_t cml_backend_unary(cml_context_t *ctx, cml_tensor_t *out,
                                const cml_tensor_t *in, cml_unary_op_t op) {
+    if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
+    if (ctx->status != CML_OK) return ctx->status;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, in);
@@ -478,6 +500,8 @@ fail:
 cml_status_t cml_backend_unary_grad(cml_context_t *ctx, cml_tensor_t *out,
                                     const cml_tensor_t *x, const cml_tensor_t *grad,
                                     cml_unary_op_t op) {
+    if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
+    if (ctx->status != CML_OK) return ctx->status;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, x);
@@ -515,6 +539,8 @@ fail:
 
 cml_status_t cml_backend_sum_rows(cml_context_t *ctx, cml_tensor_t *out,
                                   const cml_tensor_t *in) {
+    if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
+    if (ctx->status != CML_OK) return ctx->status;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, in);
@@ -547,6 +573,8 @@ fail:
 
 cml_status_t cml_backend_accum_scaled(cml_context_t *ctx, cml_tensor_t *dst,
                                       const cml_tensor_t *src, float scale) {
+    if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
+    if (ctx->status != CML_OK) return ctx->status;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, dst);
@@ -581,6 +609,8 @@ fail:
 
 cml_status_t cml_backend_add_bias(cml_context_t *ctx, cml_tensor_t *out,
                                   const cml_tensor_t *a, const cml_tensor_t *b) {
+    if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
+    if (ctx->status != CML_OK) return ctx->status;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, a);

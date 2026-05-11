@@ -3,6 +3,8 @@
 #include "memory/arena.h"
 #include "unity.h"
 
+#include <stdint.h>
+
 static cml_context_t *ctx;
 
 void setUp(void) {
@@ -161,6 +163,36 @@ static void test_arena_reset_allows_realloc(void) {
     TEST_ASSERT_EQUAL_PTR(first, second);
 }
 
+static void test_arena_alloc_null_arena_returns_null(void) {
+    TEST_ASSERT_NULL(cml_arena_alloc(NULL, 16));
+}
+
+static void test_arena_alloc_overflow_returns_null(void) {
+    ctx = cml_init(256);
+    /* (SIZE_MAX - 6) + 7 wraps when rounded up to 8 bytes — must be rejected. */
+    void *p = cml_arena_alloc(&ctx->arena, SIZE_MAX - 6);
+    TEST_ASSERT_NULL(p);
+    /* Arena should remain usable afterwards. */
+    void *q = cml_arena_alloc(&ctx->arena, 8);
+    TEST_ASSERT_NOT_NULL(q);
+}
+
+static void test_arena_rewind_across_chunks(void) {
+    ctx = cml_init(16);
+    size_t mark = cml_arena_mark(&ctx->arena);
+    /* Force at least two chunk allocations. */
+    void *a = cml_arena_alloc(&ctx->arena, 16);
+    void *b = cml_arena_alloc(&ctx->arena, 64);
+    TEST_ASSERT_NOT_NULL(a);
+    TEST_ASSERT_NOT_NULL(b);
+    TEST_ASSERT_GREATER_THAN(0, ctx->arena.offset);
+    cml_arena_rewind(&ctx->arena, mark);
+    TEST_ASSERT_EQUAL_size_t(0, ctx->arena.offset);
+    /* Subsequent alloc lands in the original chunk again. */
+    void *c = cml_arena_alloc(&ctx->arena, 8);
+    TEST_ASSERT_EQUAL_PTR(a, c);
+}
+
 int main(void) {
     UNITY_BEGIN();
 
@@ -187,6 +219,9 @@ int main(void) {
     RUN_TEST(test_arena_alloc_sequential_pointers_are_ordered);
     RUN_TEST(test_arena_reset_resets_offset);
     RUN_TEST(test_arena_reset_allows_realloc);
+    RUN_TEST(test_arena_alloc_null_arena_returns_null);
+    RUN_TEST(test_arena_alloc_overflow_returns_null);
+    RUN_TEST(test_arena_rewind_across_chunks);
 
     return UNITY_END();
 }

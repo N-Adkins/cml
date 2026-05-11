@@ -6,6 +6,7 @@ on:
 
 jobs:
   build-and-test:
+    name: CPU / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -28,13 +29,28 @@ jobs:
       - name: Test
         run: ctest --test-dir build --build-config Debug --output-on-failure
 
+  # CUDA build verification on GitHub-hosted runners. These machines do not
+  # have a GPU, so the CUDA-specific tests (cuda_parity, the cuda_* cases in
+  # test_integration) self-skip via TEST_IGNORE; what we cover here is that
+  # the CUDA build compiles and links cleanly and that the non-device tests
+  # still pass when CUDA is enabled.
+  #
+  # To run the CUDA tests against real hardware, point `runs-on` at a
+  # self-hosted runner labeled with the appropriate GPU tag, e.g.
+  #   runs-on: [self-hosted, linux, cuda]
   build-and-test-cuda:
-    runs-on: ubuntu-latest
+    name: CUDA / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install OpenBLAS
+      - name: Install OpenBLAS (Ubuntu)
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libopenblas-dev
 
       - name: Install CUDA Toolkit

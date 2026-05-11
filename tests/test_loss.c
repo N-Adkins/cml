@@ -125,6 +125,29 @@ static void test_cross_entropy_shape_mismatch_errors(void) {
     TEST_ASSERT_EQUAL(CML_INVALID_ARG, cml_get_status(ctx));
 }
 
+static void test_cross_entropy_zero_pred_does_not_nan(void) {
+    /* log(0) used to return -inf and poison gradients with NaN; the backend
+     * now floors at FLT_MIN so the loss is finite (very negative) instead. */
+    cml_tensor_t *pred = cml_tensor_init(ctx, 1, 2);
+    cml_tensor_t *target = cml_tensor_init(ctx, 1, 2);
+    cml_tensor_set(pred, 0, 0, 0.0f); cml_tensor_set(pred, 0, 1, 1.0f);
+    cml_tensor_set(target, 0, 0, 1.0f); cml_tensor_set(target, 0, 1, 0.0f);
+    cml_tensor_t *loss = cml_loss_cross_entropy(ctx, pred, target);
+    TEST_ASSERT_NOT_NULL(loss);
+    float v = cml_tensor_get(loss, 0, 0);
+    TEST_ASSERT_FALSE(v != v); /* not NaN */
+    /* And it should be finite. */
+    TEST_ASSERT_TRUE(v > -1e30f);
+    TEST_ASSERT_TRUE(v <  1e30f);
+}
+
+static void test_mse_empty_tensor_errors(void) {
+    cml_tensor_t *pred = cml_tensor_init(ctx, 0, 4);
+    cml_tensor_t *target = cml_tensor_init(ctx, 0, 4);
+    TEST_ASSERT_NULL(cml_loss_mse(ctx, pred, target));
+    TEST_ASSERT_EQUAL(CML_INVALID_ARG, cml_get_status(ctx));
+}
+
 static void test_cross_entropy_backward(void) {
     // pred = [[0.9, 0.1]], target = [[1.0, 0.0]]
     // d(loss)/d(pred_i) = -(1/n) * target_i / pred_i
@@ -159,6 +182,8 @@ int main(void) {
     RUN_TEST(test_cross_entropy_null_pred_errors);
     RUN_TEST(test_cross_entropy_shape_mismatch_errors);
     RUN_TEST(test_cross_entropy_backward);
+    RUN_TEST(test_cross_entropy_zero_pred_does_not_nan);
+    RUN_TEST(test_mse_empty_tensor_errors);
 
     return UNITY_END();
 }

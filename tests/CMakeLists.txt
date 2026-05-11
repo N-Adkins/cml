@@ -42,6 +42,18 @@ add_unity_test(test_tape.c)
 add_unity_test(test_tensor.c)
 add_unity_test(test_trainer.c)
 
+# Integration suite. Always built; CUDA cases self-skip when no device is
+# available at runtime (cml_cuda_is_available() guards their registration).
+add_executable(test_integration test_integration.c)
+target_link_libraries(test_integration PRIVATE cml ${_unity_target})
+target_include_directories(test_integration PRIVATE ../src ../include)
+cml_apply_warnings(test_integration)
+cml_apply_sanitizers(test_integration)
+# Integration scenarios train for thousands of epochs under sanitizers; give
+# the runner a longer budget than the per-op unit tests.
+add_test(NAME test_integration COMMAND test_integration)
+set_tests_properties(test_integration PROPERTIES TIMEOUT 300)
+
 if(CML_ENABLE_CUDA)
     add_unity_test(test_cuda_parity.c)
 endif()

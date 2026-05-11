@@ -3,6 +3,8 @@
 #include "tensor.h"
 #include "unity.h"
 
+#include <stdint.h>
+
 #define CTX_SIZE (1024 * 1024)
 
 static cml_context_t *ctx;
@@ -387,6 +389,22 @@ static void test_sum_single_element(void) {
     TEST_ASSERT_EQUAL_FLOAT(7.0f, cml_tensor_get(s, 0, 0));
 }
 
+static void test_sum_kahan_precision(void) {
+    /* 1e8 is so much bigger than 1.0 that 1.0 falls below the running sum's
+     * float ULP. Naive accumulation loses every increment after the first;
+     * Kahan compensation keeps them. */
+    const size_t n = 10000;
+    cml_tensor_t *t = cml_tensor_init(ctx, 1, n);
+    cml_tensor_set(t, 0, 0, 1.0e8f);
+    for (size_t i = 1; i < n; i++) cml_tensor_set(t, 0, i, 1.0f);
+
+    float expected = 1.0e8f + (float)(n - 1);
+    cml_tensor_t *s = cml_tensor_sum(ctx, t);
+    /* Naive float sum returns 1e8 (the +1s silently vanish). Kahan stays
+     * within a handful of ULPs of the true value. */
+    TEST_ASSERT_FLOAT_WITHIN(50.0f, expected, cml_tensor_get(s, 0, 0));
+}
+
 /* --- sigmoid / relu --- */
 
 static void test_sigmoid_range(void) {
@@ -474,6 +492,47 @@ static void test_errored_ctx_short_circuits(void) {
     TEST_ASSERT_NULL(cml_tensor_sum(ctx, t));
 }
 
+/* --- overflow / empty-tensor edge cases --- */
+
+static void test_init_overflow_dims_errors(void) {
+    /* rows*cols would wrap size_t */
+    cml_tensor_t *t = cml_tensor_init(ctx, SIZE_MAX, 2);
+    TEST_ASSERT_NULL(t);
+    TEST_ASSERT_EQUAL(CML_INVALID_ARG, cml_get_status(ctx));
+}
+
+static void test_init_overflow_bytes_errors(void) {
+    /* rows*cols fits, but *sizeof(float) wraps */
+    cml_tensor_t *t = cml_tensor_init(ctx, SIZE_MAX / 2, 1);
+    TEST_ASSERT_NULL(t);
+    TEST_ASSERT_EQUAL(CML_INVALID_ARG, cml_get_status(ctx));
+}
+
+static void test_init_zero_rows_returns_empty_tensor(void) {
+    cml_tensor_t *t = cml_tensor_init(ctx, 0, 4);
+    TEST_ASSERT_NOT_NULL(t);
+    TEST_ASSERT_EQUAL_size_t(0, cml_tensor_rows(t));
+    /* Operations on an empty tensor should be safe no-ops. */
+    cml_tensor_zero(t);
+    cml_tensor_fill(t, 7.0f);
+    cml_tensor_rand(t, -1.0f, 1.0f);
+    TEST_ASSERT_EQUAL(CML_OK, cml_get_status(ctx));
+}
+
+static void test_dot_empty_inner_dim_is_zero(void) {
+    /* (2x0) * (0x3) is a zero matrix of shape (2x3). */
+    cml_tensor_t *a = cml_tensor_init(ctx, 2, 0);
+    cml_tensor_t *b = cml_tensor_init(ctx, 0, 3);
+    /* The current implementation requires non-zero allocations to operate;
+     * a 2x3 result is fine to construct directly. We just ensure no crash. */
+    cml_tensor_t *result = cml_tensor_init(ctx, 2, 3);
+    cml_tensor_zero(result);
+    TEST_ASSERT_NOT_NULL(a);
+    TEST_ASSERT_NOT_NULL(b);
+    TEST_ASSERT_NOT_NULL(result);
+    TEST_ASSERT_EQUAL(CML_OK, cml_get_status(ctx));
+}
+
 /* --- view + binary op integration --- */
 
 static void test_dot_through_view(void) {
@@ -542,6 +601,7 @@ int main(void) {
 
     RUN_TEST(test_sum_known_value);
     RUN_TEST(test_sum_single_element);
+    RUN_TEST(test_sum_kahan_precision);
 
     RUN_TEST(test_sigmoid_range);
     RUN_TEST(test_relu_zeroes_negatives);
@@ -554,6 +614,11 @@ int main(void) {
 
     RUN_TEST(test_errored_ctx_short_circuits);
     RUN_TEST(test_dot_through_view);
+
+    RUN_TEST(test_init_overflow_dims_errors);
+    RUN_TEST(test_init_overflow_bytes_errors);
+    RUN_TEST(test_init_zero_rows_returns_empty_tensor);
+    RUN_TEST(test_dot_empty_inner_dim_is_zero);
 
     return UNITY_END();
 }

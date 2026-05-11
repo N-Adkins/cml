@@ -4,6 +4,7 @@
 #include "tape.h"
 
 #include <math.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -33,10 +34,22 @@ cml_tensor_t *cml_tensor_init(cml_context_t *ctx, size_t rows, size_t cols) {
     if (ctx == NULL) return NULL;
     if (ctx->status != CML_OK) return NULL;
 
+    // Guard rows*cols*sizeof(float) against size_t wrap.
+    if (rows != 0 && cols != 0) {
+        if (cols > SIZE_MAX / rows ||
+            rows * cols > SIZE_MAX / sizeof(float)) {
+            cml_context_error(ctx, CML_INVALID_ARG, "tensor dimensions overflow");
+            return NULL;
+        }
+    }
+
     cml_tensor_t *t = tensor_alloc(ctx, rows, cols);
     if (t == NULL) return NULL;
 
-    t->data = cml_arena_alloc(&ctx->arena, rows * cols * sizeof(float));
+    size_t bytes = rows * cols * sizeof(float);
+    if (bytes == 0) return t; // empty tensor; no backing storage needed
+
+    t->data = cml_arena_alloc(&ctx->arena, bytes);
     if (t->data == NULL) {
         cml_context_error(ctx, CML_OUT_OF_MEMORY, "tensor data allocation failed");
         return NULL;
@@ -56,7 +69,7 @@ size_t cml_tensor_cols(const cml_tensor_t *tensor) {
 }
 
 float cml_tensor_get(const cml_tensor_t *tensor, size_t row, size_t col) {
-    if (tensor == NULL) return 0.0f;
+    if (tensor == NULL || tensor->data == NULL) return 0.0f;
     if (tensor->ctx != NULL && cml_backend_tensor_to_host(tensor->ctx, tensor) != CML_OK) {
         return 0.0f;
     }
@@ -64,7 +77,13 @@ float cml_tensor_get(const cml_tensor_t *tensor, size_t row, size_t col) {
 }
 
 void cml_tensor_set(cml_tensor_t *tensor, size_t row, size_t col, float value) {
-    if (tensor == NULL) return;
+    if (tensor == NULL || tensor->data == NULL) return;
+    // Pull device-side data back to host first, otherwise this single-element
+    // write lands on stale host memory and the rest of the buffer is lost when
+    // we mark host as authoritative below.
+    if (tensor->ctx != NULL && cml_backend_tensor_to_host(tensor->ctx, tensor) != CML_OK) {
+        return;
+    }
     tensor->data[row * tensor->stride + col] = value;
     cml_backend_mark_host_write(tensor);
 }
@@ -101,8 +120,12 @@ bool cml_tensor_has_device_copy(const cml_tensor_t *tensor) {
     return cml_backend_tensor_has_device_copy(tensor);
 }
 
+// For a view, these only touch a sub-rectangle of the storage, so we must pull
+// device data back to host first — otherwise marking host authoritative drops
+// any data outside the view that only lives on the device.
 void cml_tensor_zero(cml_tensor_t *tensor) {
-    if (tensor == NULL) return;
+    if (tensor == NULL || tensor->data == NULL) return;
+    if (tensor->ctx != NULL && cml_backend_tensor_to_host(tensor->ctx, tensor) != CML_OK) return;
 
     for (size_t r = 0; r < tensor->rows; r++) {
         memset(tensor->data + r * tensor->stride, 0, tensor->cols * sizeof(float));
@@ -111,7 +134,8 @@ void cml_tensor_zero(cml_tensor_t *tensor) {
 }
 
 void cml_tensor_fill(cml_tensor_t *tensor, float value) {
-    if (tensor == NULL) return;
+    if (tensor == NULL || tensor->data == NULL) return;
+    if (tensor->ctx != NULL && cml_backend_tensor_to_host(tensor->ctx, tensor) != CML_OK) return;
 
     for (size_t r = 0; r < tensor->rows; r++) {
         float *row = tensor->data + r * tensor->stride;
@@ -123,7 +147,8 @@ void cml_tensor_fill(cml_tensor_t *tensor, float value) {
 }
 
 void cml_tensor_rand(cml_tensor_t *tensor, float low, float high) {
-    if (tensor == NULL) return;
+    if (tensor == NULL || tensor->data == NULL) return;
+    if (tensor->ctx != NULL && cml_backend_tensor_to_host(tensor->ctx, tensor) != CML_OK) return;
 
     float range = high - low;
     for (size_t r = 0; r < tensor->rows; r++) {

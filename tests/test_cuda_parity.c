@@ -138,6 +138,62 @@ static void test_cuda_parity_for_unary_and_sum(void) {
     TEST_ASSERT_FLOAT_WITHIN(EPS, cml_tensor_get(sum_cpu, 0, 0), cml_tensor_get(sum_cuda, 0, 0));
 }
 
+static void test_cuda_set_after_op_preserves_other_values(void) {
+    /* Regression: cml_tensor_set used to skip the device→host sync, so writing
+     * a single element after a CUDA op corrupted everything else in the tensor. */
+    require_cuda_runtime();
+
+    cml_tensor_t *a = cml_tensor_init(cuda_ctx, 2, 3);
+    cml_tensor_t *b = cml_tensor_init(cuda_ctx, 2, 3);
+    cml_tensor_fill(a, 1.0f);
+    cml_tensor_fill(b, 2.0f);
+
+    /* This op leaves c authoritative on device only. */
+    cml_tensor_t *c = cml_tensor_add(cuda_ctx, a, b);
+    TEST_ASSERT_NOT_NULL(c);
+    TEST_ASSERT_TRUE(cml_tensor_has_device_copy(c));
+
+    /* Overwrite a single element. Every other cell should retain its 3.0f value. */
+    cml_tensor_set(c, 0, 0, 99.0f);
+
+    TEST_ASSERT_EQUAL_FLOAT(99.0f, cml_tensor_get(c, 0, 0));
+    for (size_t r = 0; r < 2; r++) {
+        for (size_t cc = 0; cc < 3; cc++) {
+            if (r == 0 && cc == 0) continue;
+            TEST_ASSERT_EQUAL_FLOAT(3.0f, cml_tensor_get(c, r, cc));
+        }
+    }
+}
+
+static void test_cuda_sum_is_deterministic(void) {
+    /* The old implementation used a single-accumulator atomicAdd whose result
+     * varied run-to-run. The block-reduction sum should be bit-exact across
+     * back-to-back invocations on the same data. */
+    require_cuda_runtime();
+
+    const size_t n = 4096;
+    cml_tensor_t *t = cml_tensor_init(cuda_ctx, 1, n);
+    for (size_t i = 0; i < n; i++) {
+        /* A mix of magnitudes so non-determinism in float add order would show. */
+        cml_tensor_set(t, 0, i, ((float)i - (float)n / 2.0f) * 0.01f);
+    }
+
+    float first = cml_tensor_get(cml_tensor_sum(cuda_ctx, t), 0, 0);
+    for (int trial = 0; trial < 5; trial++) {
+        float again = cml_tensor_get(cml_tensor_sum(cuda_ctx, t), 0, 0);
+        TEST_ASSERT_EQUAL_FLOAT(first, again);
+    }
+}
+
+static void test_cuda_empty_tensor_ops_do_not_crash(void) {
+    require_cuda_runtime();
+    cml_tensor_t *t = cml_tensor_init(cuda_ctx, 0, 4);
+    TEST_ASSERT_NOT_NULL(t);
+    cml_tensor_zero(t);
+    cml_tensor_fill(t, 1.0f);
+    TEST_ASSERT_EQUAL(CML_OK, cml_get_status(cuda_ctx));
+}
+
 static void test_cuda_device_sync_roundtrip_matches_cpu(void) {
     static const float input_data[] = {
         9.0f, 8.0f,
@@ -164,6 +220,9 @@ int main(void) {
     RUN_TEST(test_cuda_parity_for_dot_and_transpose);
     RUN_TEST(test_cuda_parity_for_unary_and_sum);
     RUN_TEST(test_cuda_device_sync_roundtrip_matches_cpu);
+    RUN_TEST(test_cuda_set_after_op_preserves_other_values);
+    RUN_TEST(test_cuda_sum_is_deterministic);
+    RUN_TEST(test_cuda_empty_tensor_ops_do_not_crash);
 
     return UNITY_END();
 }

@@ -20,15 +20,14 @@ cml_context_t *cml_init_with_backend(size_t start_size, cml_backend_t backend) {
     }
     ctx->status = CML_OK;
     ctx->error_msg = NULL;
-    ctx->backend_kind = CML_BACKEND_CPU;
-    ctx->backend_ops = NULL;
+    ctx->backend_ops = NULL; // cml_backend_init populates this on success
     ctx->backend_state = NULL;
     ctx->device_allocs = NULL;
     ctx->tape_head = NULL;
     ctx->grad_enabled = true;
 
     if (cml_backend_init(ctx, backend) != CML_OK) {
-        cml_backend_deinit(ctx);
+        cml_backend_deinit(ctx); // safe: backend_ops stays NULL on failure
         cml_arena_deinit(&ctx->arena);
         free(ctx);
         return NULL;

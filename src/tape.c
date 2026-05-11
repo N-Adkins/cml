@@ -14,6 +14,7 @@ struct cml_tape_node_s {
 
 static void grad_accum_scaled(cml_context_t *ctx, cml_tensor_t *t,
                                cml_tensor_t *delta, float scale) {
+    if (ctx->status != CML_OK) return;
     if (!t->requires_grad || delta == NULL) return;
     if (t->grad == NULL) {
         t->grad = cml_tensor_init(ctx, t->rows, t->cols);
@@ -39,6 +40,7 @@ static void backward_mul(cml_context_t *ctx, struct cml_tape_node_s *node) {
     cml_tensor_t *g = node->output->grad;
     if (a->requires_grad) {
         grad_accum_scaled(ctx, a, cml_tensor_mul(ctx, g, b), 1.0f);
+        if (ctx->status != CML_OK) return;
     }
     if (b->requires_grad) {
         grad_accum_scaled(ctx, b, cml_tensor_mul(ctx, g, a), 1.0f);
@@ -55,6 +57,7 @@ static void backward_add_bias(cml_context_t *ctx, struct cml_tape_node_s *node) 
     cml_tensor_t *g = node->output->grad;
 
     grad_accum_scaled(ctx, a, g, 1.0f);
+    if (ctx->status != CML_OK) return;
 
     if (b->requires_grad) {
         cml_tensor_t *gb = cml_tensor_init(ctx, 1, b->cols);
@@ -80,15 +83,14 @@ static void backward_dot(cml_context_t *ctx, struct cml_tape_node_s *node) {
     cml_tensor_t *g = node->output->grad;
     if (a->requires_grad) {
         cml_tensor_t *bt = cml_tensor_transpose(ctx, b);
-        if (bt != NULL) {
-            grad_accum_scaled(ctx, a, cml_tensor_dot(ctx, g, bt), 1.0f);
-        }
+        if (bt == NULL) return;
+        grad_accum_scaled(ctx, a, cml_tensor_dot(ctx, g, bt), 1.0f);
+        if (ctx->status != CML_OK) return;
     }
     if (b->requires_grad) {
         cml_tensor_t *at = cml_tensor_transpose(ctx, a);
-        if (at != NULL) {
-            grad_accum_scaled(ctx, b, cml_tensor_dot(ctx, at, g), 1.0f);
-        }
+        if (at == NULL) return;
+        grad_accum_scaled(ctx, b, cml_tensor_dot(ctx, at, g), 1.0f);
     }
 }
 

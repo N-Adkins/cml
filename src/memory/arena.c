@@ -1,5 +1,6 @@
 #include "arena.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 
 static cml_arena_chunk_t *chunk_create(size_t capacity) {
@@ -50,7 +51,9 @@ void cml_arena_deinit(cml_arena_t *arena) {
 }
 
 void *cml_arena_alloc(cml_arena_t *arena, size_t size) {
-    size_t aligned = (size + 7) & ~7ULL; // aligned to 8 bytes
+    if (arena == NULL || arena->current == NULL) return NULL;
+    if (size > SIZE_MAX - 7) return NULL;
+    size_t aligned = (size + 7) & ~(size_t)7; // aligned to 8 bytes
     cml_arena_chunk_t *chunk = arena->current;
 
     if (chunk->used + aligned > chunk->capacity) {
@@ -61,7 +64,7 @@ void *cml_arena_alloc(cml_arena_t *arena, size_t size) {
             next = next->next;
         }
         if (next == NULL) {
-            size_t grown = chunk->capacity * 2;
+            size_t grown = (chunk->capacity > SIZE_MAX / 2) ? SIZE_MAX : chunk->capacity * 2;
             if (grown < aligned) {
                 grown = aligned;
             }

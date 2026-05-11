@@ -13,6 +13,10 @@ cml_tensor_t *cml_loss_mse(cml_context_t *ctx, cml_tensor_t *pred, cml_tensor_t 
         cml_context_error(ctx, CML_INVALID_ARG, "shape mismatch between pred and target");
         return NULL;
     }
+    if (cml_tensor_rows(pred) == 0 || cml_tensor_cols(pred) == 0) {
+        cml_context_error(ctx, CML_INVALID_ARG, "loss undefined for empty tensor");
+        return NULL;
+    }
 
     cml_tensor_t *diff = cml_tensor_sub(ctx, pred, target);
     if (diff == NULL) return NULL;
@@ -38,6 +42,10 @@ cml_tensor_t *cml_loss_cross_entropy(cml_context_t *ctx, cml_tensor_t *pred, cml
     if (cml_tensor_rows(pred) != cml_tensor_rows(target) ||
         cml_tensor_cols(pred) != cml_tensor_cols(target)) {
         cml_context_error(ctx, CML_INVALID_ARG, "shape mismatch between pred and target");
+        return NULL;
+    }
+    if (cml_tensor_rows(pred) == 0 || cml_tensor_cols(pred) == 0) {
+        cml_context_error(ctx, CML_INVALID_ARG, "loss undefined for empty tensor");
         return NULL;
     }
 

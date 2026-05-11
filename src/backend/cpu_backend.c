@@ -1,6 +1,7 @@
 #include "backend.h"
 
 #include <cblas.h>
+#include <float.h>
 #include <math.h>
 
 static cml_status_t cpu_init(void **state) {
@@ -100,11 +101,16 @@ static cml_status_t cpu_sum(void *state,
                             const float *in, size_t in_stride,
                             size_t rows, size_t cols, float *out) {
     (void)state;
+    // Kahan-Neumaier compensated summation to retain precision on large inputs.
     float total = 0.0f;
+    float comp = 0.0f;
     for (size_t r = 0; r < rows; r++) {
         const float *row = in + r * in_stride;
         for (size_t c = 0; c < cols; c++) {
-            total += row[c];
+            float y = row[c] - comp;
+            float t = total + y;
+            comp = (t - total) - y;
+            total = t;
         }
     }
     *out = total;
@@ -123,7 +129,9 @@ static cml_status_t cpu_unary(void *state,
             float v = src[c];
             switch (op) {
                 case CML_UNARY_LOG:
-                    dst[c] = logf(v);
+                    // Floor at FLT_MIN so log(0) returns a finite (very negative)
+                    // value instead of -inf, which would NaN-poison gradients.
+                    dst[c] = logf(v > FLT_MIN ? v : FLT_MIN);
                     break;
                 case CML_UNARY_SIGMOID:
                     dst[c] = 1.0f / (1.0f + expf(-v));
