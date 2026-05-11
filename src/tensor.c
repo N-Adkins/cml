@@ -62,6 +62,7 @@ float *cml_tensor_data(cml_tensor_t *tensor) {
 
 void cml_tensor_zero(cml_tensor_t *tensor) {
     if (tensor == NULL) return;
+
     for (size_t r = 0; r < tensor->rows; r++) {
         memset(tensor->data + r * tensor->stride, 0, tensor->cols * sizeof(float));
     }
@@ -69,6 +70,7 @@ void cml_tensor_zero(cml_tensor_t *tensor) {
 
 void cml_tensor_fill(cml_tensor_t *tensor, float value) {
     if (tensor == NULL) return;
+
     for (size_t r = 0; r < tensor->rows; r++) {
         float *row = tensor->data + r * tensor->stride;
         for (size_t c = 0; c < tensor->cols; c++) {
@@ -79,6 +81,7 @@ void cml_tensor_fill(cml_tensor_t *tensor, float value) {
 
 void cml_tensor_rand(cml_tensor_t *tensor, float low, float high) {
     if (tensor == NULL) return;
+
     float range = high - low;
     for (size_t r = 0; r < tensor->rows; r++) {
         float *row = tensor->data + r * tensor->stride;
@@ -99,6 +102,7 @@ void cml_tensor_copy(cml_context_t *ctx, cml_tensor_t *dst, const cml_tensor_t *
         cml_context_error(ctx, CML_INVALID_ARG, "shape mismatch in copy");
         return;
     }
+
     for (size_t r = 0; r < src->rows; r++) {
         cblas_scopy((int)src->cols,
                     src->data + r * src->stride, 1,
@@ -122,6 +126,7 @@ cml_tensor_t *cml_tensor_reshape(cml_context_t *ctx, cml_tensor_t *tensor,
         cml_context_error(ctx, CML_INVALID_ARG, "reshape element count mismatch");
         return NULL;
     }
+
     cml_tensor_t *view = tensor_alloc(ctx, new_rows, new_cols);
     if (view == NULL) return NULL;
     view->data = tensor->data;
@@ -141,6 +146,7 @@ cml_tensor_t *cml_tensor_view(cml_context_t *ctx, cml_tensor_t *tensor,
         cml_context_error(ctx, CML_INVALID_ARG, "view dimensions out of bounds");
         return NULL;
     }
+
     cml_tensor_t *view = tensor_alloc(ctx, rows, cols);
     if (view == NULL) return NULL;
     view->data = tensor->data + start_row * tensor->stride + start_col;
@@ -155,13 +161,16 @@ cml_tensor_t *cml_tensor_scale(cml_context_t *ctx, cml_tensor_t *tensor, float s
         cml_context_error(ctx, CML_INVALID_ARG, "tensor is NULL");
         return NULL;
     }
+
     cml_tensor_t *out = cml_tensor_init(ctx, tensor->rows, tensor->cols);
     if (out == NULL) return NULL;
+
     for (size_t r = 0; r < tensor->rows; r++) {
         cblas_scopy((int)tensor->cols, tensor->data + r * tensor->stride, 1,
                     out->data + r * out->stride, 1);
         cblas_sscal((int)out->cols, scalar, out->data + r * out->stride, 1);
     }
+
     return out;
 }
 
@@ -172,8 +181,10 @@ cml_tensor_t *cml_tensor_sigmoid(cml_context_t *ctx, cml_tensor_t *tensor) {
         cml_context_error(ctx, CML_INVALID_ARG, "tensor is NULL");
         return NULL;
     }
+
     cml_tensor_t *out = cml_tensor_init(ctx, tensor->rows, tensor->cols);
     if (out == NULL) return NULL;
+
     for (size_t r = 0; r < tensor->rows; r++) {
         const float *src = tensor->data + r * tensor->stride;
         float *dst = out->data + r * out->stride;
@@ -181,6 +192,7 @@ cml_tensor_t *cml_tensor_sigmoid(cml_context_t *ctx, cml_tensor_t *tensor) {
             dst[c] = 1.0f / (1.0f + expf(-src[c]));
         }
     }
+
     return out;
 }
 
@@ -191,8 +203,10 @@ cml_tensor_t *cml_tensor_relu(cml_context_t *ctx, cml_tensor_t *tensor) {
         cml_context_error(ctx, CML_INVALID_ARG, "tensor is NULL");
         return NULL;
     }
+
     cml_tensor_t *out = cml_tensor_init(ctx, tensor->rows, tensor->cols);
     if (out == NULL) return NULL;
+
     for (size_t r = 0; r < tensor->rows; r++) {
         const float *src = tensor->data + r * tensor->stride;
         float *dst = out->data + r * out->stride;
@@ -200,6 +214,7 @@ cml_tensor_t *cml_tensor_relu(cml_context_t *ctx, cml_tensor_t *tensor) {
             dst[c] = src[c] > 0.0f ? src[c] : 0.0f;
         }
     }
+
     return out;
 }
 
@@ -209,14 +224,17 @@ static cml_tensor_t *tensor_add_scaled(cml_context_t *ctx,
         cml_context_error(ctx, CML_INVALID_ARG, "shape mismatch");
         return NULL;
     }
+
     cml_tensor_t *out = cml_tensor_init(ctx, a->rows, a->cols);
     if (out == NULL) return NULL;
+
     for (size_t r = 0; r < a->rows; r++) {
         cblas_scopy((int)a->cols, a->data + r * a->stride, 1,
                     out->data + r * out->stride, 1);
         cblas_saxpy((int)a->cols, alpha, b->data + r * b->stride, 1,
                     out->data + r * out->stride, 1);
     }
+
     return out;
 }
 
@@ -251,8 +269,10 @@ cml_tensor_t *cml_tensor_mul(cml_context_t *ctx, cml_tensor_t *a, cml_tensor_t *
         cml_context_error(ctx, CML_INVALID_ARG, "shape mismatch");
         return NULL;
     }
+
     cml_tensor_t *out = cml_tensor_init(ctx, a->rows, a->cols);
     if (out == NULL) return NULL;
+
     for (size_t r = 0; r < a->rows; r++) {
         const float *ar = a->data + r * a->stride;
         const float *br = b->data + r * b->stride;
@@ -261,6 +281,7 @@ cml_tensor_t *cml_tensor_mul(cml_context_t *ctx, cml_tensor_t *a, cml_tensor_t *
             dr[c] = ar[c] * br[c];
         }
     }
+
     return out;
 }
 
@@ -275,8 +296,10 @@ cml_tensor_t *cml_tensor_dot(cml_context_t *ctx, cml_tensor_t *a, cml_tensor_t *
         cml_context_error(ctx, CML_INVALID_ARG, "incompatible shapes for matrix multiply");
         return NULL;
     }
+
     cml_tensor_t *out = cml_tensor_init(ctx, a->rows, b->cols);
     if (out == NULL) return NULL;
+
     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                 (int)a->rows, (int)b->cols, (int)a->cols,
                 1.0f,
@@ -284,6 +307,7 @@ cml_tensor_t *cml_tensor_dot(cml_context_t *ctx, cml_tensor_t *a, cml_tensor_t *
                 b->data, (int)b->stride,
                 0.0f,
                 out->data, (int)out->stride);
+
     return out;
 }
 
@@ -294,13 +318,16 @@ cml_tensor_t *cml_tensor_transpose(cml_context_t *ctx, cml_tensor_t *tensor) {
         cml_context_error(ctx, CML_INVALID_ARG, "tensor is NULL");
         return NULL;
     }
+
     cml_tensor_t *out = cml_tensor_init(ctx, tensor->cols, tensor->rows);
     if (out == NULL) return NULL;
+
     for (size_t r = 0; r < tensor->rows; r++) {
         for (size_t c = 0; c < tensor->cols; c++) {
             out->data[c * out->stride + r] = tensor->data[r * tensor->stride + c];
         }
     }
+
     return out;
 }
 
@@ -311,8 +338,10 @@ cml_tensor_t *cml_tensor_sum(cml_context_t *ctx, cml_tensor_t *tensor) {
         cml_context_error(ctx, CML_INVALID_ARG, "tensor is NULL");
         return NULL;
     }
+
     cml_tensor_t *out = cml_tensor_init(ctx, 1, 1);
     if (out == NULL) return NULL;
+
     float total = 0.0f;
     for (size_t r = 0; r < tensor->rows; r++) {
         const float *row = tensor->data + r * tensor->stride;
@@ -320,6 +349,7 @@ cml_tensor_t *cml_tensor_sum(cml_context_t *ctx, cml_tensor_t *tensor) {
             total += row[c];
         }
     }
+
     out->data[0] = total;
     return out;
 }
