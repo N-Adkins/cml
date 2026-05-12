@@ -146,16 +146,24 @@ function(cml_apply_sanitizers target)
     endif()
 endfunction()
 
-# Stage transitive runtime DLLs (e.g. cudart, cublas) next to the exe on Windows
-# so users don't need cudart64_XX.dll on PATH to run tests/examples.
+# Stage CUDA DLLs next to exes on Windows; FindCUDAToolkit doesn't set
+# IMPORTED_LOCATION on its imported targets so $<TARGET_RUNTIME_DLLS> is empty
+set(CML_RUNTIME_DLLS "")
+if(WIN32 AND CML_ENABLE_CUDA)
+    file(GLOB CML_RUNTIME_DLLS
+        "${CUDAToolkit_BIN_DIR}/cudart64_*.dll"
+        "${CUDAToolkit_BIN_DIR}/cublas64_*.dll"
+        "${CUDAToolkit_BIN_DIR}/cublasLt64_*.dll"
+    )
+endif()
+
 function(cml_stage_runtime_dlls target)
-    if(NOT WIN32)
+    if(NOT CML_RUNTIME_DLLS)
         return()
     endif()
     add_custom_command(TARGET ${target} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_RUNTIME_DLLS:${target}> $<TARGET_FILE_DIR:${target}>
-        COMMAND_EXPAND_LISTS
+            ${CML_RUNTIME_DLLS} $<TARGET_FILE_DIR:${target}>
     )
 endfunction()
 
