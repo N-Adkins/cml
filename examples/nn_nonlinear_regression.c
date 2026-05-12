@@ -23,7 +23,7 @@ static cml_tensor_t *forward(cml_context_t *ctx, void *ptr, cml_tensor_t *x, cml
 }
 
 int main(void) {
-    cml_context_t *ctx = cml_init_with_backend(1024 * 1024, CML_BACKEND_CUDA);
+    cml_context_t *ctx = cml_init_with_backend(1024, CML_BACKEND_CUDA);
     if (ctx == NULL) return 1;
 
     const size_t n_samples = 1024;

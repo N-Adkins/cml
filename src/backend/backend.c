@@ -2,12 +2,31 @@
 #include "../context.h"
 #include "../tensor.h"
 
+#include <limits.h>
 #include <stdlib.h>
 
 static void set_backend_error(cml_context_t *ctx, cml_status_t status, const char *msg) {
     if (ctx != NULL && status != CML_OK) {
         cml_context_error(ctx, status, msg);
     }
+}
+
+static cml_status_t check_int_dims(cml_context_t *ctx, const size_t *vals, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        if (vals[i] > (size_t)INT_MAX) {
+            set_backend_error(ctx, CML_INVALID_ARG, "tensor dim or stride exceeds INT_MAX");
+            return CML_INVALID_ARG;
+        }
+    }
+    return CML_OK;
+}
+
+static cml_status_t check_tensor_ctx(cml_context_t *ctx, const cml_tensor_t *tensor) {
+    if (tensor != NULL && tensor->ctx != NULL && tensor->ctx != ctx) {
+        set_backend_error(ctx, CML_INVALID_ARG, "tensor belongs to a different context");
+        return CML_INVALID_ARG;
+    }
+    return CML_OK;
 }
 
 static cml_tensor_t *tensor_storage(const cml_tensor_t *tensor) {
@@ -19,12 +38,13 @@ static size_t storage_elements(const cml_tensor_t *storage) {
     return storage->rows * storage->stride;
 }
 
-static cml_status_t register_device_allocation(cml_context_t *ctx, float *ptr) {
+static cml_status_t register_device_allocation(cml_context_t *ctx, float *ptr, cml_tensor_t *owner) {
     cml_device_alloc_t *node = malloc(sizeof(cml_device_alloc_t));
     if (node == NULL) {
         return CML_OUT_OF_MEMORY;
     }
     node->ptr = ptr;
+    node->owner = owner;
     node->next = ctx->device_allocs;
     ctx->device_allocs = node;
     return CML_OK;
@@ -40,7 +60,7 @@ static cml_status_t ensure_device_allocated(cml_context_t *ctx, cml_tensor_t *st
         ctx->backend_state, storage_elements(storage), &device_ptr);
     if (status != CML_OK) return status;
 
-    status = register_device_allocation(ctx, device_ptr);
+    status = register_device_allocation(ctx, device_ptr, storage);
     if (status != CML_OK) {
         if (ctx->backend_ops->free_device != NULL) {
             ctx->backend_ops->free_device(ctx->backend_state, device_ptr);
@@ -191,6 +211,12 @@ void cml_backend_device_rewind(cml_context_t *ctx, void *mark) {
                 ctx->backend_ops->free_device != NULL && node->ptr != NULL) {
             ctx->backend_ops->free_device(ctx->backend_state, node->ptr);
         }
+        // Clear the back-pointer so any tensor that outlives this rewind cannot
+        // be observed holding a freed device buffer
+        if (node->owner != NULL && node->owner->device_data == node->ptr) {
+            node->owner->device_data = NULL;
+            node->owner->device_valid = false;
+        }
         free(node);
     }
 }
@@ -227,6 +253,10 @@ bool cml_backend_tensor_has_device_copy(const cml_tensor_t *tensor) {
 cml_status_t cml_backend_copy(cml_context_t *ctx, cml_tensor_t *dst, const cml_tensor_t *src) {
     if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
     if (ctx->status != CML_OK) return ctx->status;
+    if (check_tensor_ctx(ctx, dst) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, src) != CML_OK) return CML_INVALID_ARG;
+    size_t _dims[] = {dst->rows, dst->cols, dst->stride, src->stride};
+    if (check_int_dims(ctx, _dims, sizeof(_dims)/sizeof(_dims[0])) != CML_OK) return CML_INVALID_ARG;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, src);
@@ -261,6 +291,11 @@ cml_status_t cml_backend_add_scaled(cml_context_t *ctx, cml_tensor_t *out,
                                     const cml_tensor_t *a, const cml_tensor_t *b, float alpha) {
     if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
     if (ctx->status != CML_OK) return ctx->status;
+    if (check_tensor_ctx(ctx, out) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, a) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, b) != CML_OK) return CML_INVALID_ARG;
+    size_t _dims[] = {out->rows, out->cols, out->stride, a->stride, b->stride};
+    if (check_int_dims(ctx, _dims, sizeof(_dims)/sizeof(_dims[0])) != CML_OK) return CML_INVALID_ARG;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, a);
@@ -300,6 +335,11 @@ cml_status_t cml_backend_mul(cml_context_t *ctx, cml_tensor_t *out,
                              const cml_tensor_t *a, const cml_tensor_t *b) {
     if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
     if (ctx->status != CML_OK) return ctx->status;
+    if (check_tensor_ctx(ctx, out) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, a) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, b) != CML_OK) return CML_INVALID_ARG;
+    size_t _dims[] = {out->rows, out->cols, out->stride, a->stride, b->stride};
+    if (check_int_dims(ctx, _dims, sizeof(_dims)/sizeof(_dims[0])) != CML_OK) return CML_INVALID_ARG;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, a);
@@ -339,6 +379,10 @@ cml_status_t cml_backend_scale(cml_context_t *ctx, cml_tensor_t *out,
                                const cml_tensor_t *in, float scalar) {
     if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
     if (ctx->status != CML_OK) return ctx->status;
+    if (check_tensor_ctx(ctx, out) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, in) != CML_OK) return CML_INVALID_ARG;
+    size_t _dims[] = {out->rows, out->cols, out->stride, in->stride};
+    if (check_int_dims(ctx, _dims, sizeof(_dims)/sizeof(_dims[0])) != CML_OK) return CML_INVALID_ARG;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, in);
@@ -373,6 +417,11 @@ cml_status_t cml_backend_dot(cml_context_t *ctx, cml_tensor_t *out,
                              const cml_tensor_t *a, const cml_tensor_t *b) {
     if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
     if (ctx->status != CML_OK) return ctx->status;
+    if (check_tensor_ctx(ctx, out) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, a) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, b) != CML_OK) return CML_INVALID_ARG;
+    size_t _dims[] = {a->rows, b->cols, a->cols, a->stride, b->stride, out->stride};
+    if (check_int_dims(ctx, _dims, sizeof(_dims)/sizeof(_dims[0])) != CML_OK) return CML_INVALID_ARG;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, a);
@@ -411,6 +460,10 @@ fail:
 cml_status_t cml_backend_transpose(cml_context_t *ctx, cml_tensor_t *out, const cml_tensor_t *in) {
     if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
     if (ctx->status != CML_OK) return ctx->status;
+    if (check_tensor_ctx(ctx, out) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, in) != CML_OK) return CML_INVALID_ARG;
+    size_t _dims[] = {in->rows, in->cols, in->stride, out->stride};
+    if (check_int_dims(ctx, _dims, sizeof(_dims)/sizeof(_dims[0])) != CML_OK) return CML_INVALID_ARG;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, in);
@@ -444,6 +497,9 @@ fail:
 cml_status_t cml_backend_sum(cml_context_t *ctx, const cml_tensor_t *in, float *out) {
     if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
     if (ctx->status != CML_OK) return ctx->status;
+    if (check_tensor_ctx(ctx, in) != CML_OK) return CML_INVALID_ARG;
+    size_t _dims[] = {in->rows, in->cols, in->stride};
+    if (check_int_dims(ctx, _dims, sizeof(_dims)/sizeof(_dims[0])) != CML_OK) return CML_INVALID_ARG;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, in);
@@ -467,6 +523,10 @@ cml_status_t cml_backend_unary(cml_context_t *ctx, cml_tensor_t *out,
                                const cml_tensor_t *in, cml_unary_op_t op) {
     if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
     if (ctx->status != CML_OK) return ctx->status;
+    if (check_tensor_ctx(ctx, out) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, in) != CML_OK) return CML_INVALID_ARG;
+    size_t _dims[] = {in->rows, in->cols, in->stride, out->stride};
+    if (check_int_dims(ctx, _dims, sizeof(_dims)/sizeof(_dims[0])) != CML_OK) return CML_INVALID_ARG;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, in);
@@ -502,6 +562,11 @@ cml_status_t cml_backend_unary_grad(cml_context_t *ctx, cml_tensor_t *out,
                                     cml_unary_op_t op) {
     if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
     if (ctx->status != CML_OK) return ctx->status;
+    if (check_tensor_ctx(ctx, out) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, x) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, grad) != CML_OK) return CML_INVALID_ARG;
+    size_t _dims[] = {x->rows, x->cols, x->stride, out->stride, grad->stride};
+    if (check_int_dims(ctx, _dims, sizeof(_dims)/sizeof(_dims[0])) != CML_OK) return CML_INVALID_ARG;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, x);
@@ -541,6 +606,10 @@ cml_status_t cml_backend_sum_rows(cml_context_t *ctx, cml_tensor_t *out,
                                   const cml_tensor_t *in) {
     if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
     if (ctx->status != CML_OK) return ctx->status;
+    if (check_tensor_ctx(ctx, out) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, in) != CML_OK) return CML_INVALID_ARG;
+    size_t _dims[] = {in->rows, in->cols, in->stride};
+    if (check_int_dims(ctx, _dims, sizeof(_dims)/sizeof(_dims[0])) != CML_OK) return CML_INVALID_ARG;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, in);
@@ -575,6 +644,10 @@ cml_status_t cml_backend_accum_scaled(cml_context_t *ctx, cml_tensor_t *dst,
                                       const cml_tensor_t *src, float scale) {
     if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
     if (ctx->status != CML_OK) return ctx->status;
+    if (check_tensor_ctx(ctx, dst) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, src) != CML_OK) return CML_INVALID_ARG;
+    size_t _dims[] = {dst->rows, dst->cols, dst->stride, src->stride};
+    if (check_int_dims(ctx, _dims, sizeof(_dims)/sizeof(_dims[0])) != CML_OK) return CML_INVALID_ARG;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, dst);
@@ -615,6 +688,12 @@ cml_status_t cml_backend_adam_step(cml_context_t *ctx,
     if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
     if (ctx->status != CML_OK) return ctx->status;
     if (ctx->backend_ops->adam_step == NULL) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, p) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, m) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, v) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, g) != CML_OK) return CML_INVALID_ARG;
+    size_t _dims[] = {p->rows, p->cols, p->stride, m->stride, v->stride, g->stride};
+    if (check_int_dims(ctx, _dims, sizeof(_dims)/sizeof(_dims[0])) != CML_OK) return CML_INVALID_ARG;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, p);
@@ -666,6 +745,11 @@ cml_status_t cml_backend_add_bias(cml_context_t *ctx, cml_tensor_t *out,
                                   const cml_tensor_t *a, const cml_tensor_t *b) {
     if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
     if (ctx->status != CML_OK) return ctx->status;
+    if (check_tensor_ctx(ctx, out) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, a) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, b) != CML_OK) return CML_INVALID_ARG;
+    size_t _dims[] = {out->rows, out->cols, out->stride, a->stride, b->stride};
+    if (check_int_dims(ctx, _dims, sizeof(_dims)/sizeof(_dims[0])) != CML_OK) return CML_INVALID_ARG;
     cml_status_t status;
     if (ctx->backend_ops->uses_device) {
         status = ensure_device(ctx, a);
@@ -698,5 +782,105 @@ cml_status_t cml_backend_add_bias(cml_context_t *ctx, cml_tensor_t *out,
 
 fail:
     set_backend_error(ctx, status, "backend add-bias failed");
+    return status;
+}
+
+cml_status_t cml_backend_softmax_xent_forward(cml_context_t *ctx,
+                                              cml_tensor_t *softmax_out,
+                                              const cml_tensor_t *logits,
+                                              const cml_tensor_t *targets,
+                                              float *loss_out) {
+    if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
+    if (ctx->status != CML_OK) return ctx->status;
+    if (ctx->backend_ops->softmax_xent_forward == NULL) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, softmax_out) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, logits) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, targets) != CML_OK) return CML_INVALID_ARG;
+    size_t _dims[] = {softmax_out->rows, softmax_out->cols, softmax_out->stride,
+                      logits->stride, targets->stride};
+    if (check_int_dims(ctx, _dims, sizeof(_dims)/sizeof(_dims[0])) != CML_OK) return CML_INVALID_ARG;
+
+    cml_status_t status;
+    if (ctx->backend_ops->uses_device) {
+        status = ensure_device(ctx, logits);
+        if (status != CML_OK) goto fail;
+        status = ensure_device(ctx, targets);
+        if (status != CML_OK) goto fail;
+        status = ensure_device_allocated(ctx, tensor_storage(softmax_out));
+        if (status != CML_OK) goto fail;
+    } else {
+        status = ensure_host(ctx, logits);
+        if (status != CML_OK) goto fail;
+        status = ensure_host(ctx, targets);
+        if (status != CML_OK) goto fail;
+    }
+
+    status = ctx->backend_ops->softmax_xent_forward(
+        ctx->backend_state,
+        tensor_ptr(ctx, softmax_out), softmax_out->stride,
+        tensor_const_ptr(ctx, logits), logits->stride,
+        tensor_const_ptr(ctx, targets), targets->stride,
+        softmax_out->rows, softmax_out->cols, loss_out);
+    if (status != CML_OK) goto fail;
+
+    if (ctx->backend_ops->uses_device) {
+        mark_device_write(softmax_out);
+    } else {
+        mark_host_write(softmax_out);
+    }
+    return CML_OK;
+
+fail:
+    set_backend_error(ctx, status, "backend softmax_xent_forward failed");
+    return status;
+}
+
+cml_status_t cml_backend_softmax_xent_backward(cml_context_t *ctx,
+                                               cml_tensor_t *dlogits,
+                                               const cml_tensor_t *softmax,
+                                               const cml_tensor_t *targets,
+                                               float scale) {
+    if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
+    if (ctx->status != CML_OK) return ctx->status;
+    if (ctx->backend_ops->softmax_xent_backward == NULL) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, dlogits) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, softmax) != CML_OK) return CML_INVALID_ARG;
+    if (check_tensor_ctx(ctx, targets) != CML_OK) return CML_INVALID_ARG;
+    size_t _dims[] = {dlogits->rows, dlogits->cols, dlogits->stride,
+                      softmax->stride, targets->stride};
+    if (check_int_dims(ctx, _dims, sizeof(_dims)/sizeof(_dims[0])) != CML_OK) return CML_INVALID_ARG;
+
+    cml_status_t status;
+    if (ctx->backend_ops->uses_device) {
+        status = ensure_device(ctx, softmax);
+        if (status != CML_OK) goto fail;
+        status = ensure_device(ctx, targets);
+        if (status != CML_OK) goto fail;
+        status = ensure_device_allocated(ctx, tensor_storage(dlogits));
+        if (status != CML_OK) goto fail;
+    } else {
+        status = ensure_host(ctx, softmax);
+        if (status != CML_OK) goto fail;
+        status = ensure_host(ctx, targets);
+        if (status != CML_OK) goto fail;
+    }
+
+    status = ctx->backend_ops->softmax_xent_backward(
+        ctx->backend_state,
+        tensor_ptr(ctx, dlogits), dlogits->stride,
+        tensor_const_ptr(ctx, softmax), softmax->stride,
+        tensor_const_ptr(ctx, targets), targets->stride,
+        dlogits->rows, dlogits->cols, scale);
+    if (status != CML_OK) goto fail;
+
+    if (ctx->backend_ops->uses_device) {
+        mark_device_write(dlogits);
+    } else {
+        mark_host_write(dlogits);
+    }
+    return CML_OK;
+
+fail:
+    set_backend_error(ctx, status, "backend softmax_xent_backward failed");
     return status;
 }

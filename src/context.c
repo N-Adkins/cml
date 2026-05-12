@@ -25,6 +25,7 @@ cml_context_t *cml_init_with_backend(size_t start_size, cml_backend_t backend) {
     ctx->device_allocs = NULL;
     ctx->tape_head = NULL;
     ctx->grad_enabled = true;
+    cml_rng_seed(&ctx->rng, 0u);
 
     if (cml_backend_init(ctx, backend) != CML_OK) {
         cml_backend_deinit(ctx); // safe: backend_ops stays NULL on failure
@@ -45,17 +46,17 @@ void cml_deinit(cml_context_t *ctx) {
     free(ctx);
 }
 
-cml_status_t cml_get_status(cml_context_t *ctx) {
+cml_status_t cml_get_status(const cml_context_t *ctx) {
     if (ctx == NULL) return CML_INVALID_ARG;
     return ctx->status;
 }
 
-cml_backend_t cml_get_backend(cml_context_t *ctx) {
+cml_backend_t cml_get_backend(const cml_context_t *ctx) {
     if (ctx == NULL) return CML_BACKEND_CPU;
     return ctx->backend_kind;
 }
 
-const char *cml_get_error_msg(cml_context_t *ctx) {
+const char *cml_get_error_msg(const cml_context_t *ctx) {
     if (ctx == NULL) {
         return "context is NULL";
     }
@@ -63,6 +64,11 @@ const char *cml_get_error_msg(cml_context_t *ctx) {
         return NULL;
     }
     return ctx->error_msg;
+}
+
+void cml_seed(cml_context_t *ctx, uint64_t seed) {
+    if (ctx == NULL) return;
+    cml_rng_seed(&ctx->rng, seed);
 }
 
 bool cml_cuda_is_available(void) {
@@ -78,4 +84,10 @@ void cml_context_error(cml_context_t *ctx, cml_status_t status, const char *erro
 
     ctx->status = status;
     ctx->error_msg = error_msg;
+}
+
+void cml_context_clear_status(cml_context_t *ctx) {
+    if (ctx == NULL) return;
+    ctx->status = CML_OK;
+    ctx->error_msg = NULL;
 }

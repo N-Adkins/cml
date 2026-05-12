@@ -7,6 +7,8 @@ target_sources(cml PRIVATE
     loss.c
     nn.c
     optimizer.c
+    random.c
+    scope.c
     tape.c
     tensor.c
     trainer.c

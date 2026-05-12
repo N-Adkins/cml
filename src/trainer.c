@@ -3,6 +3,7 @@
 #include "data.h"
 #include "backend/backend.h"
 
+#include <cml/scope.h>
 #include <cml/tape.h>
 #include <stdio.h>
 
@@ -100,11 +101,9 @@ void cml_trainer_fit_loader(cml_context_t *ctx, cml_trainer_t *trainer,
         size_t epoch_batch_count = 0;
 
         while (true) {
-            size_t arena_mark = cml_arena_mark(&ctx->arena);
-            void *device_mark = cml_backend_device_mark(ctx);
+            cml_scope_t scope = cml_scope_begin(ctx);
             if (ctx->status != CML_OK) {
-                cml_arena_rewind(&ctx->arena, arena_mark);
-                cml_backend_device_rewind(ctx, device_mark);
+                cml_scope_end(ctx, scope);
                 break;
             }
 
@@ -112,8 +111,7 @@ void cml_trainer_fit_loader(cml_context_t *ctx, cml_trainer_t *trainer,
             cml_tensor_t *y_batch = NULL;
             bool has_batch = cml_data_loader_next(ctx, loader, &x_batch, &y_batch);
             if (ctx->status != CML_OK || !has_batch) {
-                cml_arena_rewind(&ctx->arena, arena_mark);
-                cml_backend_device_rewind(ctx, device_mark);
+                cml_scope_end(ctx, scope);
                 break;
             }
 
@@ -121,15 +119,13 @@ void cml_trainer_fit_loader(cml_context_t *ctx, cml_trainer_t *trainer,
             bool step_ok = cml_trainer_step(ctx, trainer, x_batch, y_batch, &batch_loss);
             if (!step_ok) {
                 cml_tape_clear(ctx);
-                cml_arena_rewind(&ctx->arena, arena_mark);
-                cml_backend_device_rewind(ctx, device_mark);
+                cml_scope_end(ctx, scope);
                 break;
             }
 
             epoch_loss_sum += batch_loss;
             epoch_batch_count++;
-            cml_arena_rewind(&ctx->arena, arena_mark);
-            cml_backend_device_rewind(ctx, device_mark);
+            cml_scope_end(ctx, scope);
         }
 
         if (ctx->status != CML_OK) break;

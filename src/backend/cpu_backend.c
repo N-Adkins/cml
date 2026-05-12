@@ -249,6 +249,66 @@ static cml_status_t cpu_add_bias(void *state,
     return CML_OK;
 }
 
+static cml_status_t cpu_softmax_xent_forward(void *state,
+                                             float *softmax_out, size_t softmax_stride,
+                                             const float *logits, size_t logits_stride,
+                                             const float *targets, size_t targets_stride,
+                                             size_t rows, size_t cols, float *loss_out) {
+    (void)state;
+    if (rows == 0 || cols == 0) {
+        *loss_out = 0.0f;
+        return CML_OK;
+    }
+
+    double loss_sum = 0.0;
+    for (size_t r = 0; r < rows; r++) {
+        const float *lrow = logits + r * logits_stride;
+        const float *trow = targets + r * targets_stride;
+        float *srow = softmax_out + r * softmax_stride;
+
+        float max_v = lrow[0];
+        for (size_t c = 1; c < cols; c++) {
+            if (lrow[c] > max_v) max_v = lrow[c];
+        }
+
+        float sum_exp = 0.0f;
+        for (size_t c = 0; c < cols; c++) {
+            float e = expf(lrow[c] - max_v);
+            srow[c] = e;
+            sum_exp += e;
+        }
+        float log_sum_exp = logf(sum_exp) + max_v;
+
+        float inv = 1.0f / sum_exp;
+        double row_loss = 0.0;
+        for (size_t c = 0; c < cols; c++) {
+            srow[c] *= inv;
+            row_loss += (double)trow[c] * (double)(lrow[c] - log_sum_exp);
+        }
+        loss_sum -= row_loss;
+    }
+
+    *loss_out = (float)(loss_sum / (double)rows);
+    return CML_OK;
+}
+
+static cml_status_t cpu_softmax_xent_backward(void *state,
+                                              float *dlogits, size_t dlogits_stride,
+                                              const float *softmax, size_t softmax_stride,
+                                              const float *targets, size_t targets_stride,
+                                              size_t rows, size_t cols, float scale) {
+    (void)state;
+    for (size_t r = 0; r < rows; r++) {
+        float *drow = dlogits + r * dlogits_stride;
+        const float *srow = softmax + r * softmax_stride;
+        const float *trow = targets + r * targets_stride;
+        for (size_t c = 0; c < cols; c++) {
+            drow[c] = scale * (srow[c] - trow[c]);
+        }
+    }
+    return CML_OK;
+}
+
 const cml_backend_ops_t cml_cpu_backend_ops = {
     .uses_device = false,
     .init = cpu_init,
@@ -270,4 +330,6 @@ const cml_backend_ops_t cml_cpu_backend_ops = {
     .accum_scaled = cpu_accum_scaled,
     .add_bias = cpu_add_bias,
     .adam_step = cpu_adam_step,
+    .softmax_xent_forward = cpu_softmax_xent_forward,
+    .softmax_xent_backward = cpu_softmax_xent_backward,
 };

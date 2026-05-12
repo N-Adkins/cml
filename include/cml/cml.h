@@ -7,6 +7,7 @@
 #include "loss.h"
 #include "nn.h"
 #include "optimizer.h"
+#include "scope.h"
 #include "tape.h"
 #include "tensor.h"
 #include "trainer.h"

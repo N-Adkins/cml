@@ -23,7 +23,10 @@ struct cml_optimizer_s {
         } sgd;
         struct {
             float lr, beta1, beta2, eps;
-            cml_tensor_t **m, **v;
+            // params[i] is the leaf tensor whose moments are stored at m[i], v[i]
+            cml_tensor_t **params;
+            cml_tensor_t **m;
+            cml_tensor_t **v;
             size_t t, n;
         } adam;
     } inner;
@@ -58,22 +61,31 @@ cml_optimizer_t *cml_optimizer_adam(cml_context_t *ctx, cml_module_t *module, fl
 
     const size_t n_params = cml_module_param_count(module);
 
-    cml_optimizer_t *opt = cml_arena_alloc(&ctx->arena, sizeof(cml_optimizer_t));
-    cml_tensor_t **m = cml_arena_alloc(&ctx->arena, n_params * sizeof(cml_tensor_t *));
-    cml_tensor_t **v = cml_arena_alloc(&ctx->arena, n_params * sizeof(cml_tensor_t *));
+    // Rewind any partial state allocated below if init fails midway
+    size_t arena_mark = cml_arena_mark(&ctx->arena);
+    void *device_mark = cml_backend_device_mark(ctx);
 
-    if (opt == NULL || (n_params > 0 && (m == NULL || v == NULL))) {
+    cml_optimizer_t *opt = cml_arena_alloc(&ctx->arena, sizeof(cml_optimizer_t));
+    cml_tensor_t **params = NULL;
+    cml_tensor_t **m = NULL;
+    cml_tensor_t **v = NULL;
+    if (n_params > 0) {
+        params = cml_arena_alloc(&ctx->arena, n_params * sizeof(cml_tensor_t *));
+        m = cml_arena_alloc(&ctx->arena, n_params * sizeof(cml_tensor_t *));
+        v = cml_arena_alloc(&ctx->arena, n_params * sizeof(cml_tensor_t *));
+    }
+
+    if (opt == NULL || (n_params > 0 && (params == NULL || m == NULL || v == NULL))) {
+        cml_backend_device_rewind(ctx, device_mark);
+        cml_arena_rewind(&ctx->arena, arena_mark);
+        // Rollback succeeded; surface a fresh, retry-able OOM rather than whatever
+        // partial state the failed allocation left behind
+        cml_context_clear_status(ctx);
         cml_context_error(ctx, CML_OUT_OF_MEMORY, "adam optimizer allocation failed");
         return NULL;
     }
 
-    cml_tensor_t **params = NULL;
     if (n_params > 0) {
-        params = malloc(n_params * sizeof(cml_tensor_t *));
-        if (params == NULL) {
-            cml_context_error(ctx, CML_OUT_OF_MEMORY, "adam optimizer allocation failed");
-            return NULL;
-        }
         cml_module_collect_params(module, params, 0);
 
         for (size_t i = 0; i < n_params; i++) {
@@ -83,7 +95,10 @@ cml_optimizer_t *cml_optimizer_adam(cml_context_t *ctx, cml_module_t *module, fl
             m[i] = cml_tensor_init(ctx, param_rows, param_cols);
             v[i] = cml_tensor_init(ctx, param_rows, param_cols);
             if (m[i] == NULL || v[i] == NULL) {
-                free(params);
+                cml_backend_device_rewind(ctx, device_mark);
+                cml_arena_rewind(&ctx->arena, arena_mark);
+                cml_context_clear_status(ctx);
+                cml_context_error(ctx, CML_OUT_OF_MEMORY, "adam moments allocation failed");
                 return NULL;
             }
             // Force device allocation now so these buffers live above any
@@ -92,9 +107,15 @@ cml_optimizer_t *cml_optimizer_adam(cml_context_t *ctx, cml_module_t *module, fl
             // trainer's device_rewind would free them between iterations.
             cml_backend_tensor_to_device(ctx, m[i]);
             cml_backend_tensor_to_device(ctx, v[i]);
+            if (ctx->status != CML_OK) {
+                cml_backend_device_rewind(ctx, device_mark);
+                cml_arena_rewind(&ctx->arena, arena_mark);
+                cml_context_clear_status(ctx);
+                cml_context_error(ctx, CML_BACKEND_UNAVAILABLE,
+                                  "adam: failed to stage moments on device");
+                return NULL;
+            }
         }
-
-        free(params);
     }
 
     opt->kind = CML_OPT_ADAM;
@@ -104,6 +125,7 @@ cml_optimizer_t *cml_optimizer_adam(cml_context_t *ctx, cml_module_t *module, fl
     opt->inner.adam.beta2 = beta2;
     opt->inner.adam.eps = eps;
     opt->inner.adam.t = 0;
+    opt->inner.adam.params = params;
     opt->inner.adam.m = m;
     opt->inner.adam.v = v;
 
@@ -118,6 +140,18 @@ static void sgd_step(cml_optimizer_t *opt, cml_tensor_t **params, size_t n_param
     }
 }
 
+static cml_tensor_t **adam_find_moments(cml_optimizer_t *opt, cml_tensor_t *p,
+                                         cml_tensor_t **m_out, cml_tensor_t **v_out) {
+    for (size_t i = 0; i < opt->inner.adam.n; i++) {
+        if (opt->inner.adam.params[i] == p) {
+            *m_out = opt->inner.adam.m[i];
+            *v_out = opt->inner.adam.v[i];
+            return m_out;
+        }
+    }
+    return NULL;
+}
+
 static void adam_step(cml_optimizer_t *opt, cml_tensor_t **params, size_t n_params) {
     opt->inner.adam.t++;
 
@@ -130,8 +164,16 @@ static void adam_step(cml_optimizer_t *opt, cml_tensor_t **params, size_t n_para
         cml_tensor_t *gradient = cml_tensor_grad(p);
         if (gradient == NULL) continue;
 
-        cml_backend_adam_step(p->ctx, p, opt->inner.adam.m[i], opt->inner.adam.v[i],
-                              gradient,
+        cml_tensor_t *m = NULL;
+        cml_tensor_t *v = NULL;
+        if (adam_find_moments(opt, p, &m, &v) == NULL) {
+            // Caller passed a param the optimizer wasn't built for
+            cml_context_error(p->ctx, CML_INVALID_ARG,
+                              "adam: parameter not registered with this optimizer");
+            return;
+        }
+
+        cml_backend_adam_step(p->ctx, p, m, v, gradient,
                               opt->inner.adam.lr,
                               opt->inner.adam.beta1, opt->inner.adam.beta2,
                               opt->inner.adam.eps, bc1, bc2);

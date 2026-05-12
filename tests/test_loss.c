@@ -91,14 +91,14 @@ static void test_mse_backward(void) {
 
 static void test_cross_entropy_known_value(void) {
     // pred = [[0.9, 0.1]], target = [[1.0, 0.0]]
-    // loss = -mean(target * log(pred)) = -log(0.9) / 2 = 0.052682
+    // loss = -(1/N) * sum(target * log(pred)) = -log(0.9) / 1 = 0.10536
     cml_tensor_t *pred = cml_tensor_init(ctx, 1, 2);
     cml_tensor_t *target = cml_tensor_init(ctx, 1, 2);
     cml_tensor_set(pred, 0, 0, 0.9f); cml_tensor_set(pred, 0, 1, 0.1f);
     cml_tensor_set(target, 0, 0, 1.0f); cml_tensor_set(target, 0, 1, 0.0f);
     cml_tensor_t *loss = cml_loss_cross_entropy(ctx, pred, target);
     TEST_ASSERT_NOT_NULL(loss);
-    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.052682f, cml_tensor_get(loss, 0, 0));
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.10536f, cml_tensor_get(loss, 0, 0));
 }
 
 static void test_cross_entropy_output_is_scalar(void) {
@@ -149,9 +149,9 @@ static void test_mse_empty_tensor_errors(void) {
 
 static void test_cross_entropy_backward(void) {
     // pred = [[0.9, 0.1]], target = [[1.0, 0.0]]
-    // d(loss)/d(pred_i) = -(1/n) * target_i / pred_i
-    // grad[0,0] = -0.5 * 1.0 / 0.9 = -0.55556
-    // grad[0,1] = -0.5 * 0.0 / 0.1 =  0.0
+    // d(loss)/d(pred_i) = -(1/N) * target_i / pred_i with N = rows = 1
+    // grad[0,0] = -1.0 * 1.0 / 0.9 = -1.11111
+    // grad[0,1] = -1.0 * 0.0 / 0.1 =  0.0
     cml_tensor_t *pred = cml_tensor_init(ctx, 1, 2);
     cml_tensor_t *target = cml_tensor_init(ctx, 1, 2);
     cml_tensor_set(pred, 0, 0, 0.9f); cml_tensor_set(pred, 0, 1, 0.1f);
@@ -161,7 +161,7 @@ static void test_cross_entropy_backward(void) {
     cml_backward(ctx, loss);
     cml_tensor_t *gp = cml_tensor_grad(pred);
     TEST_ASSERT_NOT_NULL(gp);
-    TEST_ASSERT_FLOAT_WITHIN(DELTA, -0.55556f, cml_tensor_get(gp, 0, 0));
+    TEST_ASSERT_FLOAT_WITHIN(DELTA, -1.11111f, cml_tensor_get(gp, 0, 0));
     TEST_ASSERT_FLOAT_WITHIN(DELTA,  0.0f, cml_tensor_get(gp, 0, 1));
 }
 

@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 // This is the entire context for an AI program. It is opaque and hidden from the user - but
 // it has some internals used for things like memory allocation.
@@ -31,14 +32,17 @@ cml_context_t *cml_init_with_backend(size_t size, cml_backend_t backend);
 void cml_deinit(cml_context_t *ctx);
 
 // Returns the current status code of the CML instance
-cml_status_t cml_get_status(cml_context_t *ctx);
+cml_status_t cml_get_status(const cml_context_t *ctx);
 
 // Returns the compute backend selected for this context.
-cml_backend_t cml_get_backend(cml_context_t *ctx);
+cml_backend_t cml_get_backend(const cml_context_t *ctx);
 
 // If cml_get_status returned anything but CML_OK, this will
 // return a more detailed error message.
-const char *cml_get_error_msg(cml_context_t *ctx);
+const char *cml_get_error_msg(const cml_context_t *ctx);
+
+// Reseeds the context PRNG used by tensor_rand and data shuffling
+void cml_seed(cml_context_t *ctx, uint64_t seed);
 
 // True when this build was compiled with CUDA backend support.
 bool cml_cuda_is_available(void);

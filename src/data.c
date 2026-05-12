@@ -1,14 +1,17 @@
 #include "data.h"
 #include "context.h"
+#include "random.h"
 
-#include <ctype.h>
-#include <errno.h>
-#include <stdio.h>
+#include <math.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#define CML_DATA_CSV_LINE_MAX 8192
+typedef struct {
+    char *start;
+    size_t len;
+} cml_csv_field_t;
 
 static char *cml_dataset_alloc_string(cml_context_t *ctx, const char *src, size_t len) {
     if (len == SIZE_MAX) {
@@ -81,221 +84,194 @@ static bool cml_dataset_set_default_names(cml_context_t *ctx, cml_dataset_t *dat
     return true;
 }
 
-static bool cml_csv_line_too_long(const char *line, FILE *file) {
-    size_t len = strlen(line);
-    if (len == 0) return false;
-    if (line[len - 1] == '\n') return false;
-    return !feof(file);
+// Reads one logical line into *buf, growing the buffer as needed. Strips a trailing CR/LF.
+// Returns 1 if a line was read, 0 at clean EOF, -1 on allocation failure.
+static int cml_csv_read_line(FILE *file, char **buf, size_t *cap, size_t *out_len) {
+    size_t pos = 0;
+    int ch;
+    while ((ch = fgetc(file)) != EOF) {
+        if (pos + 1 >= *cap) {
+            size_t new_cap = (*cap == 0) ? 256 : *cap * 2;
+            if (new_cap < pos + 2) new_cap = pos + 2;
+            char *nb = realloc(*buf, new_cap);
+            if (nb == NULL) return -1;
+            *buf = nb;
+            *cap = new_cap;
+        }
+        if (ch == '\n') break;
+        (*buf)[pos++] = (char)ch;
+    }
+    if (ch == EOF && pos == 0) {
+        if (*cap == 0) {
+            char *nb = realloc(*buf, 1);
+            if (nb == NULL) return -1;
+            *buf = nb;
+            *cap = 1;
+        }
+        (*buf)[0] = '\0';
+        *out_len = 0;
+        return 0;
+    }
+    if (pos > 0 && (*buf)[pos - 1] == '\r') pos--;
+    (*buf)[pos] = '\0';
+    *out_len = pos;
+    return 1;
 }
 
 static bool cml_csv_line_is_blank(const char *line) {
-    const unsigned char *p = (const unsigned char *)line;
-    while (*p != '\0') {
-        if (!isspace(*p)) return false;
-        p++;
+    while (*line != '\0') {
+        if (*line != ' ' && *line != '\t') return false;
+        line++;
     }
     return true;
 }
 
-static bool cml_csv_parse_row(const char *line, size_t expected_cols, float *values) {
-    const char *p = line;
-    for (size_t col = 0; col < expected_cols; col++) {
-        while (*p == ' ' || *p == '\t') {
-            p++;
-        }
+// Locale-independent decimal float parser. Accepts optional sign, integer
+// and fraction parts, and optional decimal exponent. Returns true on success
+// and sets *endp to the character past the parsed number
+static bool cml_parse_float_c(const char *s, const char **endp, float *out) {
+    const char *start = s;
+    while (*s == ' ' || *s == '\t') s++;
 
-        if (*p == '\0' || *p == '\n' || *p == '\r') {
-            return false;
-        }
+    int sign = 1;
+    if (*s == '+') s++;
+    else if (*s == '-') { sign = -1; s++; }
 
-        errno = 0;
-        char *endptr = NULL;
-        float value = strtof(p, &endptr);
-        if (p == endptr || errno == ERANGE) {
-            return false;
-        }
-        p = endptr;
+    double mantissa = 0.0;
+    int frac_digits = 0;
+    bool past_point = false;
+    bool has_digit = false;
 
-        while (*p == ' ' || *p == '\t') {
-            p++;
-        }
-
-        if (col + 1 < expected_cols) {
-            if (*p != ',') {
-                return false;
-            }
-            p++;
+    while (*s != '\0') {
+        if (*s >= '0' && *s <= '9') {
+            mantissa = mantissa * 10.0 + (double)(*s - '0');
+            if (past_point) frac_digits++;
+            has_digit = true;
+            s++;
+        } else if (*s == '.' && !past_point) {
+            past_point = true;
+            s++;
         } else {
-            while (*p == ' ' || *p == '\t') {
-                p++;
-            }
-            if (*p != '\0' && *p != '\n' && *p != '\r') {
-                return false;
-            }
-        }
-
-        if (values != NULL) {
-            values[col] = value;
+            break;
         }
     }
 
-    return true;
-}
-
-static bool cml_csv_count_rows(cml_context_t *ctx, FILE *file, size_t expected_cols,
-                               bool has_header, size_t *row_count) {
-    char line[CML_DATA_CSV_LINE_MAX];
-    bool header_consumed = !has_header;
-    size_t rows = 0;
-
-    while (fgets(line, sizeof(line), file) != NULL) {
-        if (cml_csv_line_too_long(line, file)) {
-            cml_context_error(ctx, CML_INVALID_ARG, "CSV line exceeds maximum length");
-            return false;
-        }
-        if (cml_csv_line_is_blank(line)) {
-            continue;
-        }
-        if (!header_consumed) {
-            header_consumed = true;
-            continue;
-        }
-        if (!cml_csv_parse_row(line, expected_cols, NULL)) {
-            cml_context_error(ctx, CML_INVALID_ARG, "CSV row has invalid format");
-            return false;
-        }
-        rows++;
+    if (!has_digit) {
+        *endp = start;
+        return false;
     }
 
-    *row_count = rows;
-    return true;
-}
-
-static bool cml_csv_parse_header_into_dataset(cml_context_t *ctx, const char *line,
-                                              cml_dataset_t *dataset) {
-    size_t expected_cols = dataset->num_features + dataset->num_targets;
-    const char *p = line;
-
-    for (size_t col = 0; col < expected_cols; col++) {
-        while (*p == ' ' || *p == '\t') {
-            p++;
+    int exp10 = -frac_digits;
+    if (*s == 'e' || *s == 'E') {
+        const char *exp_pos = s;
+        s++;
+        int esign = 1;
+        if (*s == '+') s++;
+        else if (*s == '-') { esign = -1; s++; }
+        // Cap the accumulator well past any meaningful float magnitude; beyond this
+        // the result is zero or inf anyway, and unbounded accumulation would overflow int
+        const int EXP_CAP = 100000;
+        int eval = 0;
+        bool has_exp_digit = false;
+        while (*s >= '0' && *s <= '9') {
+            if (eval < EXP_CAP) eval = eval * 10 + (*s - '0');
+            has_exp_digit = true;
+            s++;
         }
-
-        if (*p == '\0' || *p == '\n' || *p == '\r') {
-            cml_context_error(ctx, CML_INVALID_ARG, "CSV header has too few columns");
-            return false;
-        }
-
-        const char *start = p;
-        while (*p != ',' && *p != '\0' && *p != '\n' && *p != '\r') {
-            p++;
-        }
-        const char *end = p;
-        while (end > start && (end[-1] == ' ' || end[-1] == '\t')) {
-            end--;
-        }
-        if (end == start) {
-            cml_context_error(ctx, CML_INVALID_ARG, "CSV header column name is empty");
-            return false;
-        }
-
-        char *name = cml_dataset_alloc_string(ctx, start, (size_t)(end - start));
-        if (name == NULL) return false;
-        if (col < dataset->num_features) {
-            dataset->feature_names[col] = name;
+        if (!has_exp_digit) {
+            s = exp_pos;
         } else {
-            dataset->target_names[col - dataset->num_features] = name;
-        }
-
-        if (col + 1 < expected_cols) {
-            if (*p != ',') {
-                cml_context_error(ctx, CML_INVALID_ARG, "CSV header has too few columns");
-                return false;
-            }
-            p++;
-        } else {
-            while (*p == ' ' || *p == '\t') {
-                p++;
-            }
-            if (*p != '\0' && *p != '\n' && *p != '\r') {
-                cml_context_error(ctx, CML_INVALID_ARG, "CSV header has too many columns");
-                return false;
-            }
+            exp10 += esign * eval;
         }
     }
 
+    double value = (double)sign * mantissa * pow(10.0, (double)exp10);
+    *out = (float)value;
+    *endp = s;
     return true;
 }
 
-static bool cml_csv_fill_dataset(cml_context_t *ctx, FILE *file,
-                                 bool has_header, cml_dataset_t *dataset) {
-    char line[CML_DATA_CSV_LINE_MAX];
-    bool header_consumed = !has_header;
-    size_t row = 0;
-    size_t feature_cols = dataset->num_features;
-    size_t target_cols = dataset->num_targets;
-    size_t expected_cols = feature_cols + target_cols;
+// Extracts one CSV field from *p (in-place rewriting for quoted fields to collapse "" -> ").
+// On success: writes the field to *out (null-terminated), advances *p past the comma
+// terminating the field, and sets *had_comma. Returns true if a field was parsed.
+static bool cml_csv_next_field(char **p, cml_csv_field_t *out, bool *had_comma) {
+    char *s = *p;
+    while (*s == ' ' || *s == '\t') s++;
 
-    if (expected_cols > SIZE_MAX / sizeof(float)) {
-        cml_context_error(ctx, CML_INVALID_ARG, "CSV column count overflow");
-        return false;
-    }
-
-    float *values = (float *)malloc(expected_cols * sizeof(float));
-    if (values == NULL) {
-        cml_context_error(ctx, CML_OUT_OF_MEMORY, "failed to allocate CSV parse buffer");
-        return false;
-    }
-
-    float *feature_data = cml_tensor_data(dataset->features);
-    float *target_data = cml_tensor_data(dataset->targets);
-    if (feature_data == NULL || target_data == NULL) {
-        free(values);
-        return false;
-    }
-
-    while (fgets(line, sizeof(line), file) != NULL) {
-        if (cml_csv_line_too_long(line, file)) {
-            cml_context_error(ctx, CML_INVALID_ARG, "CSV line exceeds maximum length");
-            free(values);
-            return false;
-        }
-        if (cml_csv_line_is_blank(line)) {
-            continue;
-        }
-        if (!header_consumed) {
-            if (!cml_csv_parse_header_into_dataset(ctx, line, dataset)) {
-                free(values);
-                return false;
+    if (*s == '"') {
+        s++;
+        char *field_start = s;
+        char *w = s;
+        while (*s != '\0') {
+            if (*s == '"') {
+                if (s[1] == '"') {
+                    *w++ = '"';
+                    s += 2;
+                } else {
+                    s++;
+                    break;
+                }
+            } else {
+                *w++ = *s++;
             }
-            header_consumed = true;
-            continue;
         }
-        if (!cml_csv_parse_row(line, expected_cols, values)) {
-            cml_context_error(ctx, CML_INVALID_ARG, "CSV row has invalid format");
-            free(values);
+        out->start = field_start;
+        out->len = (size_t)(w - field_start);
+        // Write a null terminator into the (now-unused) gap before the next comma
+        if (w < s) *w = '\0';
+
+        while (*s == ' ' || *s == '\t') s++;
+        *had_comma = (*s == ',');
+        if (*had_comma) {
+            s++;
+        } else if (*s != '\0') {
             return false;
         }
-        if (row >= dataset->num_samples) {
-            cml_context_error(ctx, CML_INVALID_ARG, "CSV row count changed during load");
-            free(values);
-            return false;
-        }
-
-        for (size_t col = 0; col < feature_cols; col++) {
-            feature_data[row * feature_cols + col] = values[col];
-        }
-        for (size_t col = 0; col < target_cols; col++) {
-            target_data[row * target_cols + col] = values[feature_cols + col];
-        }
-
-        row++;
+        *p = s;
+        return true;
     }
 
-    free(values);
-    if (row != dataset->num_samples) {
-        cml_context_error(ctx, CML_INVALID_ARG, "CSV row count mismatch");
-        return false;
+    char *field_start = s;
+    while (*s != '\0' && *s != ',') s++;
+    char *field_end = s;
+    while (field_end > field_start && (field_end[-1] == ' ' || field_end[-1] == '\t')) {
+        field_end--;
+    }
+    *had_comma = (*s == ',');
+    if (*had_comma) s++;
+    out->start = field_start;
+    out->len = (size_t)(field_end - field_start);
+    if (field_end < s) *field_end = '\0';
+    *p = s;
+    return true;
+}
+
+// Splits a CSV line into exactly `expected` fields. Returns true on exact match.
+static bool cml_csv_split_line(char *line, size_t expected, cml_csv_field_t *fields) {
+    char *p = line;
+    for (size_t i = 0; i < expected; i++) {
+        bool had_comma = false;
+        if (!cml_csv_next_field(&p, &fields[i], &had_comma)) return false;
+        bool last = (i + 1 == expected);
+        if (last) {
+            if (had_comma) return false; // too many fields
+            while (*p == ' ' || *p == '\t') p++;
+            if (*p != '\0') return false; // garbage after last field
+        } else {
+            if (!had_comma) return false; // not enough fields
+        }
+    }
+    return true;
+}
+
+static bool cml_csv_parse_floats(cml_csv_field_t *fields, size_t n, float *out) {
+    for (size_t i = 0; i < n; i++) {
+        if (fields[i].len == 0) return false;
+        // cml_csv_next_field already null-terminates fields[i].start[fields[i].len]
+        const char *endp = NULL;
+        if (!cml_parse_float_c(fields[i].start, &endp, &out[i])) return false;
+        while (*endp == ' ' || *endp == '\t') endp++;
+        if (*endp != '\0') return false;
     }
     return true;
 }
@@ -360,46 +336,161 @@ cml_dataset_t *cml_dataset_load_csv(cml_context_t *ctx, const char *path,
         cml_context_error(ctx, CML_INVALID_ARG, "CSV column count overflow");
         return NULL;
     }
-
     size_t expected_cols = feature_cols + target_cols;
+    // Guard the largest per-column allocation we'll do (the field metadata array)
+    size_t max_elem = sizeof(cml_csv_field_t);
+    if (sizeof(char *) > max_elem) max_elem = sizeof(char *);
+    if (sizeof(float) > max_elem) max_elem = sizeof(float);
+    if (expected_cols > SIZE_MAX / max_elem) {
+        cml_context_error(ctx, CML_INVALID_ARG, "CSV column count overflow");
+        return NULL;
+    }
+
     FILE *file = fopen(path, "r");
     if (file == NULL) {
         cml_context_error(ctx, CML_INVALID_ARG, "failed to open CSV file");
         return NULL;
     }
 
+    char *line = NULL;
+    size_t line_cap = 0;
+    cml_csv_field_t *fields = malloc(expected_cols * sizeof(cml_csv_field_t));
+    float *row_values = malloc(expected_cols * sizeof(float));
+    char **header_names = has_header ? calloc(expected_cols, sizeof(char *)) : NULL;
+    float *flat = NULL; // growing buffer for parsed rows
+    size_t flat_cap = 0;
+    size_t flat_used = 0;
     size_t row_count = 0;
-    if (!cml_csv_count_rows(ctx, file, expected_cols, has_header, &row_count)) {
-        fclose(file);
-        return NULL;
+    bool header_consumed = !has_header;
+
+    bool ok = (fields != NULL && row_values != NULL && (!has_header || header_names != NULL));
+    if (!ok) {
+        cml_context_error(ctx, CML_OUT_OF_MEMORY, "failed to allocate CSV parse buffers");
+        goto cleanup;
     }
+
+    for (;;) {
+        size_t line_len = 0;
+        int rc = cml_csv_read_line(file, &line, &line_cap, &line_len);
+        if (rc < 0) {
+            cml_context_error(ctx, CML_OUT_OF_MEMORY, "failed to grow CSV line buffer");
+            ok = false;
+            goto cleanup;
+        }
+        if (rc == 0) break;
+        if (cml_csv_line_is_blank(line)) continue;
+
+        if (!header_consumed) {
+            if (!cml_csv_split_line(line, expected_cols, fields)) {
+                cml_context_error(ctx, CML_INVALID_ARG, "CSV header has invalid format");
+                ok = false;
+                goto cleanup;
+            }
+            // Copy into the arena up front; fields[] gets reused for subsequent rows
+            for (size_t i = 0; i < expected_cols; i++) {
+                if (fields[i].len == 0) {
+                    cml_context_error(ctx, CML_INVALID_ARG, "CSV header column name is empty");
+                    ok = false;
+                    goto cleanup;
+                }
+                header_names[i] = cml_dataset_alloc_string(ctx, fields[i].start, fields[i].len);
+                if (header_names[i] == NULL) { ok = false; goto cleanup; }
+            }
+            header_consumed = true;
+            continue;
+        }
+
+        if (!cml_csv_split_line(line, expected_cols, fields)) {
+            cml_context_error(ctx, CML_INVALID_ARG, "CSV row has invalid format");
+            ok = false;
+            goto cleanup;
+        }
+        if (!cml_csv_parse_floats(fields, expected_cols, row_values)) {
+            cml_context_error(ctx, CML_INVALID_ARG, "CSV row has non-numeric field");
+            ok = false;
+            goto cleanup;
+        }
+
+        if (flat_used + expected_cols > flat_cap) {
+            size_t needed = flat_used + expected_cols;
+            if (flat_used > SIZE_MAX - expected_cols) {
+                cml_context_error(ctx, CML_INVALID_ARG, "CSV row buffer overflow");
+                ok = false;
+                goto cleanup;
+            }
+            size_t new_cap = flat_cap == 0 ? expected_cols * 16 : flat_cap;
+            while (new_cap < needed) {
+                if (new_cap > SIZE_MAX / 2) { new_cap = needed; break; }
+                new_cap *= 2;
+            }
+            if (new_cap > SIZE_MAX / sizeof(float)) {
+                cml_context_error(ctx, CML_INVALID_ARG, "CSV row buffer overflow");
+                ok = false;
+                goto cleanup;
+            }
+            float *nb = realloc(flat, new_cap * sizeof(float));
+            if (nb == NULL) {
+                cml_context_error(ctx, CML_OUT_OF_MEMORY, "failed to grow CSV row buffer");
+                ok = false;
+                goto cleanup;
+            }
+            flat = nb;
+            flat_cap = new_cap;
+        }
+        memcpy(flat + flat_used, row_values, expected_cols * sizeof(float));
+        flat_used += expected_cols;
+        row_count++;
+    }
+
+    if (!ok) goto cleanup;
     if (row_count == 0) {
-        fclose(file);
         cml_context_error(ctx, CML_INVALID_ARG, "CSV contains no data rows");
-        return NULL;
+        ok = false;
+        goto cleanup;
     }
 
-    cml_tensor_t *features = cml_tensor_init(ctx, row_count, feature_cols);
-    cml_tensor_t *targets = cml_tensor_init(ctx, row_count, target_cols);
-    if (features == NULL || targets == NULL) {
-        fclose(file);
-        return NULL;
+    cml_tensor_t *features_tensor = cml_tensor_init(ctx, row_count, feature_cols);
+    cml_tensor_t *targets_tensor = cml_tensor_init(ctx, row_count, target_cols);
+    if (features_tensor == NULL || targets_tensor == NULL) { ok = false; goto cleanup; }
+
+    float *fd = cml_tensor_data(features_tensor);
+    float *td = cml_tensor_data(targets_tensor);
+    if (fd == NULL || td == NULL) { ok = false; goto cleanup; }
+
+    for (size_t r = 0; r < row_count; r++) {
+        const float *src = flat + r * expected_cols;
+        memcpy(fd + r * feature_cols, src, feature_cols * sizeof(float));
+        memcpy(td + r * target_cols, src + feature_cols, target_cols * sizeof(float));
     }
 
-    cml_dataset_t *dataset = cml_dataset_from_tensors(ctx, features, targets);
-    if (dataset == NULL) {
-        fclose(file);
-        return NULL;
+    cml_dataset_t *dataset = cml_dataset_from_tensors(ctx, features_tensor, targets_tensor);
+    if (dataset == NULL) { ok = false; goto cleanup; }
+
+    if (has_header) {
+        for (size_t i = 0; i < feature_cols; i++) {
+            dataset->feature_names[i] = header_names[i];
+        }
+        for (size_t i = 0; i < target_cols; i++) {
+            dataset->target_names[i] = header_names[feature_cols + i];
+        }
     }
 
-    rewind(file);
-    if (!cml_csv_fill_dataset(ctx, file, has_header, dataset)) {
-        fclose(file);
-        return NULL;
-    }
+    free(fields);
+    free(row_values);
+    free(header_names);
+    free(flat);
+    free(line);
     fclose(file);
-
     return dataset;
+
+cleanup:
+    free(fields);
+    free(row_values);
+    free(header_names);
+    free(flat);
+    free(line);
+    fclose(file);
+    return NULL;
 }
 
 size_t cml_dataset_num_samples(const cml_dataset_t *dataset) {
@@ -553,17 +644,13 @@ void cml_data_loader_reset(cml_context_t *ctx, cml_data_loader_t *loader) {
 
     if (!loader->shuffle || loader->indices == NULL) return;
 
-    for (size_t i = 0; i < loader->dataset->num_samples; i++) {
-        loader->indices[i] = i;
-    }
+    size_t n = loader->dataset->num_samples;
+    for (size_t i = 0; i < n; i++) loader->indices[i] = i;
 
-    for (size_t i = loader->dataset->num_samples; i > 1; i--) {
+    // Fisher-Yates using the context-local PRNG
+    for (size_t i = n; i > 1; i--) {
+        size_t swap_idx = cml_rng_next_below(&ctx->rng, i);
         size_t idx = i - 1;
-        double ratio = (double)rand() / ((double)RAND_MAX + 1.0);
-        size_t swap_idx = (size_t)(ratio * (double)i);
-        if (swap_idx > idx) {
-            swap_idx = idx;
-        }
         size_t tmp = loader->indices[idx];
         loader->indices[idx] = loader->indices[swap_idx];
         loader->indices[swap_idx] = tmp;

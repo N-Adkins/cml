@@ -52,6 +52,7 @@ void cml_arena_deinit(cml_arena_t *arena) {
 
 void *cml_arena_alloc(cml_arena_t *arena, size_t size) {
     if (arena == NULL || arena->current == NULL) return NULL;
+    if (size == 0) return NULL;
     if (size > SIZE_MAX - 7) return NULL;
     size_t aligned = (size + 7) & ~(size_t)7; // aligned to 8 bytes
     cml_arena_chunk_t *chunk = arena->current;

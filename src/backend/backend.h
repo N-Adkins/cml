@@ -87,6 +87,18 @@ typedef struct cml_backend_ops_s {
                               size_t rows, size_t cols,
                               float lr, float beta1, float beta2, float eps,
                               float bc1, float bc2);
+    // Stable row-wise softmax + cross-entropy. Writes softmax_out and a scalar mean loss
+    cml_status_t (*softmax_xent_forward)(void *state,
+                                         float *softmax_out, size_t softmax_stride,
+                                         const float *logits, size_t logits_stride,
+                                         const float *targets, size_t targets_stride,
+                                         size_t rows, size_t cols, float *loss_out);
+    // dlogits = scale * (softmax - targets)
+    cml_status_t (*softmax_xent_backward)(void *state,
+                                          float *dlogits, size_t dlogits_stride,
+                                          const float *softmax, size_t softmax_stride,
+                                          const float *targets, size_t targets_stride,
+                                          size_t rows, size_t cols, float scale);
 } cml_backend_ops_t;
 
 extern const cml_backend_ops_t cml_cpu_backend_ops;
@@ -132,6 +144,16 @@ cml_status_t cml_backend_adam_step(cml_context_t *ctx,
                                    const cml_tensor_t *g,
                                    float lr, float beta1, float beta2, float eps,
                                    float bc1, float bc2);
+cml_status_t cml_backend_softmax_xent_forward(cml_context_t *ctx,
+                                              cml_tensor_t *softmax_out,
+                                              const cml_tensor_t *logits,
+                                              const cml_tensor_t *targets,
+                                              float *loss_out);
+cml_status_t cml_backend_softmax_xent_backward(cml_context_t *ctx,
+                                               cml_tensor_t *dlogits,
+                                               const cml_tensor_t *softmax,
+                                               const cml_tensor_t *targets,
+                                               float scale);
 
 #ifdef __cplusplus
 }

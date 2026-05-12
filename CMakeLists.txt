@@ -196,9 +196,6 @@ cml_apply_sanitizers(cml)
 
 add_subdirectory(src)
 
-# Examples are added before tests because the integration test suite links the
-# `cml_scenarios` library defined here. The runnable example binaries
-# themselves are still gated by CML_BUILD_EXAMPLES.
 option(CML_BUILD_EXAMPLES "Build example programs" ON)
 add_subdirectory(examples)
 

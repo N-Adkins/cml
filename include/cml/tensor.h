@@ -38,6 +38,10 @@ cml_tensor_t *cml_tensor_reshape(cml_context_t *ctx, cml_tensor_t *tensor, size_
 cml_tensor_t *cml_tensor_view(cml_context_t *ctx, cml_tensor_t *tensor, size_t start_row, size_t start_col,
                               size_t rows, size_t cols);
 
+// All ops below are out-of-place: the input tensor is read and a fresh output
+// is returned. There are no in-place mutating ops, so tape entries always reference
+// the input's state at record time
+
 // Unary operators
 cml_tensor_t *cml_tensor_scale(cml_context_t *ctx, cml_tensor_t *tensor, float scalar);
 cml_tensor_t *cml_tensor_log(cml_context_t *ctx, cml_tensor_t *tensor);

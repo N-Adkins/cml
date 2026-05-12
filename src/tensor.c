@@ -1,6 +1,7 @@
 #include "tensor.h"
 #include "context.h"
 #include "backend/backend.h"
+#include "random.h"
 #include "tape.h"
 
 #include <math.h>
@@ -73,6 +74,12 @@ size_t cml_tensor_cols(const cml_tensor_t *tensor) {
 
 float cml_tensor_get(const cml_tensor_t *tensor, size_t row, size_t col) {
     if (tensor == NULL || tensor->data == NULL) return 0.0f;
+    if (row >= tensor->rows || col >= tensor->cols) {
+        if (tensor->ctx != NULL) {
+            cml_context_error(tensor->ctx, CML_INVALID_ARG, "tensor index out of bounds");
+        }
+        return 0.0f;
+    }
     if (tensor->ctx != NULL && cml_backend_tensor_to_host(tensor->ctx, tensor) != CML_OK) {
         return 0.0f;
     }
@@ -81,6 +88,12 @@ float cml_tensor_get(const cml_tensor_t *tensor, size_t row, size_t col) {
 
 void cml_tensor_set(cml_tensor_t *tensor, size_t row, size_t col, float value) {
     if (tensor == NULL || tensor->data == NULL) return;
+    if (row >= tensor->rows || col >= tensor->cols) {
+        if (tensor->ctx != NULL) {
+            cml_context_error(tensor->ctx, CML_INVALID_ARG, "tensor index out of bounds");
+        }
+        return;
+    }
     // Pull device-side data back to host first, otherwise this single-element
     // write lands on stale host memory and the rest of the buffer is lost when
     // we mark host as authoritative below.
@@ -151,13 +164,15 @@ void cml_tensor_fill(cml_tensor_t *tensor, float value) {
 
 void cml_tensor_rand(cml_tensor_t *tensor, float low, float high) {
     if (tensor == NULL || tensor->data == NULL) return;
-    if (tensor->ctx != NULL && cml_backend_tensor_to_host(tensor->ctx, tensor) != CML_OK) return;
+    if (tensor->ctx == NULL) return;
+    if (cml_backend_tensor_to_host(tensor->ctx, tensor) != CML_OK) return;
 
     float range = high - low;
+    cml_rng_t *rng = &tensor->ctx->rng;
     for (size_t r = 0; r < tensor->rows; r++) {
         float *row = tensor->data + r * tensor->stride;
         for (size_t c = 0; c < tensor->cols; c++) {
-            row[c] = low + range * ((float)rand() / (float)RAND_MAX);
+            row[c] = low + range * cml_rng_next_uniform(rng);
         }
     }
     cml_backend_mark_host_write(tensor);

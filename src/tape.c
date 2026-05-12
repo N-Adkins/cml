@@ -111,6 +111,23 @@ static void backward_sum(cml_context_t *ctx, struct cml_tape_node_s *node) {
     grad_accum_scaled(ctx, x, expanded, 1.0f);
 }
 
+static void backward_softmax_xent(cml_context_t *ctx, struct cml_tape_node_s *node) {
+    cml_tensor_t *logits = node->inputs[0];
+    cml_tensor_t *target = node->inputs[1];
+    cml_tensor_t *softmax_buf = (cml_tensor_t *)node->aux;
+    if (softmax_buf == NULL) return;
+
+    float g = cml_tensor_get(node->output->grad, 0, 0);
+    float scale = g / (float)logits->rows;
+
+    if (logits->requires_grad) {
+        cml_tensor_t *dlogits = cml_tensor_init(ctx, logits->rows, logits->cols);
+        if (dlogits == NULL) return;
+        if (cml_backend_softmax_xent_backward(ctx, dlogits, softmax_buf, target, scale) != CML_OK) return;
+        grad_accum_scaled(ctx, logits, dlogits, 1.0f);
+    }
+}
+
 static struct cml_tape_node_s *tape_push(cml_context_t *ctx, cml_tensor_t *out,
                                           cml_tensor_t **inputs, size_t n,
                                           void (*bwd)(cml_context_t *, struct cml_tape_node_s *),
@@ -245,6 +262,15 @@ void cml_tape_record_sum(cml_context_t *ctx, cml_tensor_t *out,
 
     cml_tensor_t *inputs[] = {tensor};
     tape_push(ctx, out, inputs, 1, backward_sum, NULL);
+}
+
+void cml_tape_record_softmax_xent(cml_context_t *ctx, cml_tensor_t *loss,
+                                   cml_tensor_t *logits, cml_tensor_t *target,
+                                   cml_tensor_t *softmax_buf) {
+    if (!needs_grad(ctx, logits, target)) return;
+
+    cml_tensor_t *inputs[] = {logits, target};
+    tape_push(ctx, loss, inputs, 2, backward_softmax_xent, softmax_buf);
 }
 
 void cml_backward(cml_context_t *ctx, cml_tensor_t *loss) {

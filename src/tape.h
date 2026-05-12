@@ -14,5 +14,8 @@ void cml_tape_record_sigmoid(cml_context_t *ctx, cml_tensor_t *out, cml_tensor_t
 void cml_tape_record_relu(cml_context_t *ctx, cml_tensor_t *out, cml_tensor_t *tensor);
 void cml_tape_record_transpose(cml_context_t *ctx, cml_tensor_t *out, cml_tensor_t *tensor);
 void cml_tape_record_sum(cml_context_t *ctx, cml_tensor_t *out, cml_tensor_t *tensor);
+void cml_tape_record_softmax_xent(cml_context_t *ctx, cml_tensor_t *loss,
+                                   cml_tensor_t *logits, cml_tensor_t *target,
+                                   cml_tensor_t *softmax_buf);
 
 #endif
