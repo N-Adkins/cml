@@ -23,18 +23,6 @@ function(get_filename_stem input_file output_var)
     set(${output_var} "${temp_stem}" PARENT_SCOPE)
 endfunction()
 
-function(cml_add_test test_name target_name)
-    if(WIN32 AND CML_ENABLE_CUDA)
-        add_test(NAME ${test_name}
-            COMMAND ${CMAKE_COMMAND} -E env
-                "PATH=${CUDAToolkit_BIN_DIR};$ENV{PATH}"
-                $<TARGET_FILE:${target_name}>
-        )
-    else()
-        add_test(NAME ${test_name} COMMAND ${target_name})
-    endif()
-endfunction()
-
 macro(add_unity_test file_name)
     get_filename_stem("${file_name}" test_name)
     add_executable(${test_name} ${file_name})
@@ -43,7 +31,7 @@ macro(add_unity_test file_name)
     cml_apply_warnings(${test_name})
     cml_apply_sanitizers(${test_name})
     cml_stage_runtime_dlls(${test_name})
-    cml_add_test(${test_name} ${test_name})
+    add_test(${test_name} ${test_name})
 endmacro()
 
 add_unity_test(test_context.c)
@@ -67,7 +55,7 @@ cml_stage_runtime_dlls(test_integration)
 
 # Integration scenarios train for thousands of epochs under sanitizers; give
 # the runner a longer budget than the per-op unit tests.
-cml_add_test(test_integration test_integration)
+add_test(test_integration test_integration)
 set_tests_properties(test_integration PROPERTIES TIMEOUT 300)
 
 if(CML_ENABLE_CUDA)

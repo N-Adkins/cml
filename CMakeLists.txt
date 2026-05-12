@@ -154,6 +154,7 @@ if(WIN32 AND CML_ENABLE_CUDA)
         "${CUDAToolkit_BIN_DIR}/cudart64_*.dll"
         "${CUDAToolkit_BIN_DIR}/cublas64_*.dll"
         "${CUDAToolkit_BIN_DIR}/cublasLt64_*.dll"
+        "${CUDAToolkit_BIN_DIR}/nvJitLink64_*.dll"
     )
 endif()
 
