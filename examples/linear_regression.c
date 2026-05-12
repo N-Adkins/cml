@@ -38,8 +38,9 @@ int main(void) {
     cml_tensor_t *params[2];
     size_t n_params = cml_linear_collect_params(model.layer, params, 0);
 
+    cml_optimizer_t *opt = cml_optimizer_sgd(ctx, 0.05f);
     cml_trainer_t *trainer = cml_trainer_init(ctx, &model, linreg_forward,
-                                              params, n_params, 0.05f);
+                                              params, n_params, opt);
 
     cml_trainer_fit(ctx, trainer, x_train, y_train, 1000, true);
     if (cml_get_status(ctx) != CML_OK) {

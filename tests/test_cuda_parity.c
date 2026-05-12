@@ -139,8 +139,6 @@ static void test_cuda_parity_for_unary_and_sum(void) {
 }
 
 static void test_cuda_set_after_op_preserves_other_values(void) {
-    /* Regression: cml_tensor_set used to skip the device→host sync, so writing
-     * a single element after a CUDA op corrupted everything else in the tensor. */
     require_cuda_runtime();
 
     cml_tensor_t *a = cml_tensor_init(cuda_ctx, 2, 3);
@@ -148,12 +146,10 @@ static void test_cuda_set_after_op_preserves_other_values(void) {
     cml_tensor_fill(a, 1.0f);
     cml_tensor_fill(b, 2.0f);
 
-    /* This op leaves c authoritative on device only. */
     cml_tensor_t *c = cml_tensor_add(cuda_ctx, a, b);
     TEST_ASSERT_NOT_NULL(c);
     TEST_ASSERT_TRUE(cml_tensor_has_device_copy(c));
 
-    /* Overwrite a single element. Every other cell should retain its 3.0f value. */
     cml_tensor_set(c, 0, 0, 99.0f);
 
     TEST_ASSERT_EQUAL_FLOAT(99.0f, cml_tensor_get(c, 0, 0));

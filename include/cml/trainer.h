@@ -4,7 +4,11 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "context.h"
+#include "optimizer.h"
 #include "tensor.h"
+
+// This is a framework for training the models to make it easier with a nice ui.
+// You basically just throw everything in it and provide it a loss function and it will work.
 
 typedef struct cml_trainer_s cml_trainer_t;
 
@@ -17,10 +21,10 @@ cml_trainer_t *cml_trainer_init(cml_context_t *ctx,
                                  cml_loss_fn loss_fn,
                                  cml_tensor_t **params,
                                  size_t n_params,
-                                 float lr);
+                                 cml_optimizer_t *opt);
 
 // Runs the training loop for `epochs` iterations.
-// When verbose is true, renders a single-line progress bar with epoch and loss updates.
+// When verbose is true, renders a progress bar with epoch and loss updates.
 void cml_trainer_fit(cml_context_t *ctx, cml_trainer_t *trainer,
                      cml_tensor_t *x, cml_tensor_t *y,
                      size_t epochs, bool verbose);

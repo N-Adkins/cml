@@ -3,15 +3,9 @@
 
 #include <stdlib.h>
 
-/*
- * End-to-end training scenarios driven against both CPU and CUDA contexts.
- *
- * Each scenario is implemented once as an `_impl(backend)` function and
- * exposed twice — once with the CPU backend, once with CUDA — so Unity prints
- * both runs by name. CUDA cases call TEST_IGNORE when the runtime device is
- * not available (e.g. CI runner without a GPU); they only run if the build
- * compiled CUDA in and a device is reachable.
- */
+// End-to-end training scenarios driven against both CPU and CUDA contexts;
+// Basically each test has a _impl and takes a backend type and if cuda is available
+// it will run both, otherwise just CPU.
 
 #define CTX_SIZE (8 * 1024 * 1024)
 
@@ -79,8 +73,11 @@ static cml_status_t train_linreg(cml_context_t *ctx, size_t epochs, float lr,
     cml_tensor_t *params[2];
     size_t n_params = cml_linear_collect_params(model.layer, params, 0);
 
+    cml_optimizer_t *opt = cml_optimizer_sgd(ctx, lr);
+    if (opt == NULL) return cml_get_status(ctx);
+
     cml_trainer_t *trainer = cml_trainer_init(ctx, &model, linreg_forward,
-                                              params, n_params, lr);
+                                              params, n_params, opt);
     if (trainer == NULL) return cml_get_status(ctx);
 
     cml_trainer_fit(ctx, trainer, x_train, y_train, epochs, false);
@@ -112,7 +109,7 @@ static void linreg_impl(cml_backend_t backend) {
 static void test_linear_regression_cpu(void)  { linreg_impl(CML_BACKEND_CPU); }
 static void test_linear_regression_cuda(void) { linreg_impl(CML_BACKEND_CUDA); }
 
-/* --- 2. XOR MLP: small Sequential net learning the XOR truth table --- */
+/* --- 2. XOR MLP: small sequential net learning the XOR truth table --- */
 
 typedef struct {
     cml_module_t *net;
@@ -151,9 +148,10 @@ static void xor_impl(cml_backend_t backend) {
     TEST_ASSERT_NOT_NULL(params);
     cml_module_collect_params(model.net, params, 0);
 
+    cml_optimizer_t *opt = cml_optimizer_adam(ctx, model.net, 0.01f, 0.9f, 0.999f, 1e-8f);
     cml_trainer_t *trainer = cml_trainer_init(ctx, &model, xor_forward,
-                                              params, n_params, 0.1f);
-    cml_trainer_fit(ctx, trainer, x, y, 5000, false);
+                                              params, n_params, opt);
+    cml_trainer_fit(ctx, trainer, x, y, 2000, false);
     TEST_ASSERT_EQUAL(CML_OK, cml_get_status(ctx));
 
     cml_grad_disable(ctx);
@@ -165,9 +163,6 @@ static void xor_impl(cml_backend_t backend) {
 
     free(params);
 
-    // Loose threshold: each prediction within 0.3 of its target (the XOR
-    // truth table). Tight enough to fail if training is broken, loose enough
-    // to absorb small CPU/CUDA float-order differences.
     TEST_ASSERT_FLOAT_WITHIN(0.3f, 0.0f, p[0]);
     TEST_ASSERT_FLOAT_WITHIN(0.3f, 1.0f, p[1]);
     TEST_ASSERT_FLOAT_WITHIN(0.3f, 1.0f, p[2]);
@@ -199,10 +194,10 @@ static void grad_check_impl(cml_backend_t backend) {
     cml_tensor_rand(W, -0.5f, 0.5f);
     cml_tensor_set_requires_grad(W, true);
 
-    // Autograd pass.
+    // Autograd pass
     cml_tensor_t *pred = cml_tensor_dot(ctx, x, W);
     cml_tensor_t *diff = cml_tensor_sub(ctx, pred, y);
-    cml_tensor_t *sq   = cml_tensor_mul(ctx, diff, diff);
+    cml_tensor_t *sq = cml_tensor_mul(ctx, diff, diff);
     cml_tensor_t *loss = cml_tensor_sum(ctx, sq);
     cml_backward(ctx, loss);
 
@@ -212,7 +207,7 @@ static void grad_check_impl(cml_backend_t backend) {
     cml_tape_clear(ctx);
     cml_grad_disable(ctx);
 
-    // Compare against central finite differences at every element of W.
+    // Compare against central finite differences at every element of W
     const float eps = 1e-3f;
     for (size_t r = 0; r < 3; r++) {
         for (size_t c = 0; c < 2; c++) {
@@ -228,7 +223,7 @@ static void grad_check_impl(cml_backend_t backend) {
 
             float numerical = (lp - lm) / (2.0f * eps);
             float autograd  = cml_tensor_get(gW, r, c);
-            // float32 + eps=1e-3 typically agrees to a few parts in 1e3.
+            // float32 + eps=1e-3 typically agrees to a few parts in 1e3
             TEST_ASSERT_FLOAT_WITHIN(2e-2f, numerical, autograd);
         }
     }
@@ -239,7 +234,7 @@ static void grad_check_impl(cml_backend_t backend) {
 static void test_gradient_check_cpu(void)  { grad_check_impl(CML_BACKEND_CPU); }
 static void test_gradient_check_cuda(void) { grad_check_impl(CML_BACKEND_CUDA); }
 
-/* --- 4. SGD actually decreases loss monotonically (smoothed) --- */
+/* --- 4. SGD actually decreases loss --- */
 
 static void sgd_descends_impl(cml_backend_t backend) {
     cml_context_t *ctx = open_ctx(backend);

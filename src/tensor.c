@@ -55,6 +55,9 @@ cml_tensor_t *cml_tensor_init(cml_context_t *ctx, size_t rows, size_t cols) {
         return NULL;
     }
 
+    // Zero tensors by default
+    memset(t->data, 0, bytes);
+
     return t;
 }
 

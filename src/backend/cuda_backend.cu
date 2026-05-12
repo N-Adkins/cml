@@ -8,6 +8,9 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+// CUDA impl for the backend, this shit is terrible code and I don't know what I'm doing
+// but it works and has test coverage so we'll just roll with it
+
 #define CML_CUDA_SUM_BLOCK 256
 #define CML_CUDA_SUM_MAX_BLOCKS 1024
 
@@ -32,8 +35,6 @@ static cml_status_t map_cublas_status(cublasStatus_t status) {
 static cml_status_t finish_kernel(void) {
     cudaError_t status = cudaGetLastError();
     if (status != cudaSuccess) return map_cuda_status(status);
-    // Force runtime errors (out-of-bounds, illegal memory access) to surface here
-    // rather than at the next API call.
     status = cudaDeviceSynchronize();
     return map_cuda_status(status);
 }
@@ -114,7 +115,7 @@ static __global__ void kernel_unary(float *out, size_t out_stride,
     float outv = v;
     if (op == CML_UNARY_LOG) {
         // Floor at FLT_MIN to match the CPU backend and avoid -inf propagating
-        // into gradients.
+        // into gradients
         outv = logf(v > FLT_MIN ? v : FLT_MIN);
     } else if (op == CML_UNARY_SIGMOID) {
         outv = 1.0f / (1.0f + expf(-v));
@@ -133,6 +134,28 @@ static __global__ void kernel_accum_scaled(float *dst, size_t dst_stride,
     size_t r = idx / cols;
     size_t c = idx % cols;
     dst[r * dst_stride + c] += scale * src[r * src_stride + c];
+}
+
+static __global__ void kernel_adam_step(float *p, size_t p_stride,
+                                        float *m, size_t m_stride,
+                                        float *v, size_t v_stride,
+                                        const float *g, size_t g_stride,
+                                        size_t rows, size_t cols,
+                                        float lr, float beta1, float beta2, float eps,
+                                        float bc1, float bc2) {
+    size_t idx = (size_t)blockIdx.x * (size_t)blockDim.x + (size_t)threadIdx.x;
+    size_t total = rows * cols;
+    if (idx >= total) return;
+    size_t r = idx / cols;
+    size_t c = idx % cols;
+    float gv = g[r * g_stride + c];
+    float new_m = beta1 * m[r * m_stride + c] + (1.0f - beta1) * gv;
+    float new_v = beta2 * v[r * v_stride + c] + (1.0f - beta2) * gv * gv;
+    m[r * m_stride + c] = new_m;
+    v[r * v_stride + c] = new_v;
+    float m_hat = new_m / bc1;
+    float v_hat = new_v / bc2;
+    p[r * p_stride + c] -= lr * m_hat / (sqrtf(v_hat) + eps);
 }
 
 static __global__ void kernel_add_bias(float *out, size_t out_stride,
@@ -409,6 +432,25 @@ static cml_status_t cuda_accum_scaled(void *state,
     return finish_kernel();
 }
 
+static cml_status_t cuda_adam_step(void *state,
+                                   float *p, size_t p_stride,
+                                   float *m, size_t m_stride,
+                                   float *v, size_t v_stride,
+                                   const float *g, size_t g_stride,
+                                   size_t rows, size_t cols,
+                                   float lr, float beta1, float beta2, float eps,
+                                   float bc1, float bc2) {
+    (void)state;
+    size_t total = rows * cols;
+    if (total == 0) return CML_OK;
+    int block = 256;
+    int grid = (int)((total + (size_t)block - 1U) / (size_t)block);
+    kernel_adam_step<<<grid, block>>>(p, p_stride, m, m_stride, v, v_stride,
+                                       g, g_stride, rows, cols,
+                                       lr, beta1, beta2, eps, bc1, bc2);
+    return finish_kernel();
+}
+
 static cml_status_t cuda_add_bias(void *state,
                                   float *out, size_t out_stride,
                                   const float *a, size_t a_stride,
@@ -501,4 +543,5 @@ extern "C" const cml_backend_ops_t cml_cuda_backend_ops = {
     .sum_rows = cuda_sum_rows,
     .accum_scaled = cuda_accum_scaled,
     .add_bias = cuda_add_bias,
+    .adam_step = cuda_adam_step,
 };

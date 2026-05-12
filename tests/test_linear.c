@@ -69,7 +69,7 @@ static void test_linear_bias_initialized_zero(void) {
 }
 
 static void test_linear_weight_in_xavier_range(void) {
-    /* limit = sqrt(6 / (in + out)) = sqrt(6/7) ≈ 0.9258 */
+    // limit = sqrt(6 / (in + out)) = sqrt(6/7) = 0.9258
     cml_linear_t *l = cml_linear_init(ctx, 4, 3);
     cml_tensor_t *w = cml_linear_weight(l);
     float limit = 0.9259f;
@@ -102,8 +102,8 @@ static void test_linear_forward_output_shape(void) {
 }
 
 static void test_linear_forward_known_values(void) {
-    /* w = identity [[1,0],[0,1]], b = [[5, 10]], x = [[3, 4]]
-     * out = dot(x, w) + b = [[3, 4]] + [[5, 10]] = [[8, 14]] */
+    // w = identity [[1,0],[0,1]], b = [[5, 10]], x = [[3, 4]]
+    // out = dot(x, w) + b = [[3, 4]] + [[5, 10]] = [[8, 14]]
     cml_linear_t *l = cml_linear_init(ctx, 2, 2);
     cml_tensor_t *w = cml_linear_weight(l);
     cml_tensor_t *b = cml_linear_bias(l);
@@ -132,7 +132,7 @@ static void test_linear_forward_null_layer_errors(void) {
 
 static void test_linear_forward_shape_mismatch_errors(void) {
     cml_linear_t *l = cml_linear_init(ctx, 4, 3);
-    cml_tensor_t *x = cml_tensor_init(ctx, 1, 2); /* wrong: expects 4 cols */
+    cml_tensor_t *x = cml_tensor_init(ctx, 1, 2); // wrong: expects 4
     cml_tensor_fill(x, 1.0f);
     TEST_ASSERT_NULL(cml_linear_forward(ctx, l, x));
     TEST_ASSERT_EQUAL(CML_INVALID_ARG, cml_get_status(ctx));

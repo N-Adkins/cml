@@ -26,10 +26,10 @@ cml_trainer_t *cml_trainer_init(cml_context_t *ctx,
                                  cml_loss_fn loss_fn,
                                  cml_tensor_t **params,
                                  size_t n_params,
-                                 float lr) {
+                                 cml_optimizer_t *opt) {
     if (ctx == NULL) return NULL;
     if (ctx->status != CML_OK) return NULL;
-    if (loss_fn == NULL || params == NULL) {
+    if (loss_fn == NULL || params == NULL || opt == NULL) {
         cml_context_error(ctx, CML_INVALID_ARG, "argument is NULL");
         return NULL;
     }
@@ -44,8 +44,7 @@ cml_trainer_t *cml_trainer_init(cml_context_t *ctx,
     trainer->loss_fn  = loss_fn;
     trainer->params   = params;
     trainer->n_params = n_params;
-    trainer->opt      = cml_sgd_init(ctx, lr);
-    if (trainer->opt == NULL) return NULL;
+    trainer->opt      = opt;
     trainer->last_loss = 0.0f;
     trainer->last_epoch = 0;
     trainer->has_loss = false;
@@ -95,7 +94,7 @@ void cml_trainer_fit(cml_context_t *ctx, cml_trainer_t *trainer,
         }
 
         cml_backward(ctx, loss);
-        cml_sgd_step(trainer->opt, trainer->params, trainer->n_params);
+        cml_optimizer_step(trainer->opt, trainer->params, trainer->n_params);
         cml_tape_clear(ctx);
         cml_arena_rewind(&ctx->arena, arena_mark);
         cml_backend_device_rewind(ctx, device_mark);

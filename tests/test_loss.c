@@ -135,8 +135,7 @@ static void test_cross_entropy_zero_pred_does_not_nan(void) {
     cml_tensor_t *loss = cml_loss_cross_entropy(ctx, pred, target);
     TEST_ASSERT_NOT_NULL(loss);
     float v = cml_tensor_get(loss, 0, 0);
-    TEST_ASSERT_FALSE(v != v); /* not NaN */
-    /* And it should be finite. */
+    TEST_ASSERT_FALSE(v != v); // not NaN
     TEST_ASSERT_TRUE(v > -1e30f);
     TEST_ASSERT_TRUE(v <  1e30f);
 }

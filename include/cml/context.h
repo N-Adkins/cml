@@ -24,12 +24,15 @@ typedef enum {
 // Spins up an entire CML instance - notably there is no global state so multiple should be able
 // to run at the same time.
 cml_context_t *cml_init(size_t size);
+
 // Same as cml_init, but allows selecting CPU or CUDA backend at context creation.
 cml_context_t *cml_init_with_backend(size_t size, cml_backend_t backend);
+
 void cml_deinit(cml_context_t *ctx);
 
 // Returns the current status code of the CML instance
 cml_status_t cml_get_status(cml_context_t *ctx);
+
 // Returns the compute backend selected for this context.
 cml_backend_t cml_get_backend(cml_context_t *ctx);
 

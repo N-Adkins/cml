@@ -8,7 +8,8 @@
 #include <stddef.h>
 
 // This is an abstraction over all of the big math operations I might need, as well as
-// allocation. This is what allows cuda + cpu to use the same code.
+// allocation. This is what allows cuda + cpu to use the same code. It's basically just a huge
+// vtable.
 
 #ifdef __cplusplus
 extern "C" {
@@ -78,6 +79,14 @@ typedef struct cml_backend_ops_s {
                              const float *a, size_t a_stride,
                              const float *b, size_t b_stride,
                              size_t rows, size_t cols);
+    cml_status_t (*adam_step)(void *state,
+                              float *p, size_t p_stride,
+                              float *m, size_t m_stride,
+                              float *v, size_t v_stride,
+                              const float *g, size_t g_stride,
+                              size_t rows, size_t cols,
+                              float lr, float beta1, float beta2, float eps,
+                              float bc1, float bc2);
 } cml_backend_ops_t;
 
 extern const cml_backend_ops_t cml_cpu_backend_ops;
@@ -118,6 +127,11 @@ cml_status_t cml_backend_accum_scaled(cml_context_t *ctx, cml_tensor_t *dst,
                                       const cml_tensor_t *src, float scale);
 cml_status_t cml_backend_add_bias(cml_context_t *ctx, cml_tensor_t *out,
                                   const cml_tensor_t *a, const cml_tensor_t *b);
+cml_status_t cml_backend_adam_step(cml_context_t *ctx,
+                                   cml_tensor_t *p, cml_tensor_t *m, cml_tensor_t *v,
+                                   const cml_tensor_t *g,
+                                   float lr, float beta1, float beta2, float eps,
+                                   float bc1, float bc2);
 
 #ifdef __cplusplus
 }

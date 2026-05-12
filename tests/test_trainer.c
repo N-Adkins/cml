@@ -1,6 +1,7 @@
 #include <cml/context.h>
 #include <cml/linear.h>
 #include <cml/loss.h>
+#include <cml/optimizer.h>
 #include <cml/tape.h>
 #include <cml/tensor.h>
 #include <cml/trainer.h>
@@ -33,19 +34,28 @@ static void test_trainer_init_not_null(void) {
     test_model_t model = { cml_linear_init(ctx, 1, 1) };
     cml_tensor_t *params[2];
     size_t n = cml_linear_collect_params(model.layer, params, 0);
-    cml_trainer_t *trainer = cml_trainer_init(ctx, &model, test_forward, params, n, 0.01f);
+    cml_optimizer_t *opt = cml_optimizer_sgd(ctx, 0.01f);
+    cml_trainer_t *trainer = cml_trainer_init(ctx, &model, test_forward, params, n, opt);
     TEST_ASSERT_NOT_NULL(trainer);
     TEST_ASSERT_EQUAL(CML_OK, cml_get_status(ctx));
 }
 
 static void test_trainer_null_ctx_returns_null(void) {
     cml_tensor_t *params[2];
-    TEST_ASSERT_NULL(cml_trainer_init(NULL, NULL, test_forward, params, 0, 0.01f));
+    cml_optimizer_t *opt = cml_optimizer_sgd(ctx, 0.01f);
+    TEST_ASSERT_NULL(cml_trainer_init(NULL, NULL, test_forward, params, 0, opt));
 }
 
 static void test_trainer_null_loss_fn_errors(void) {
     cml_tensor_t *params[2];
-    TEST_ASSERT_NULL(cml_trainer_init(ctx, NULL, NULL, params, 0, 0.01f));
+    cml_optimizer_t *opt = cml_optimizer_sgd(ctx, 0.01f);
+    TEST_ASSERT_NULL(cml_trainer_init(ctx, NULL, NULL, params, 0, opt));
+    TEST_ASSERT_EQUAL(CML_INVALID_ARG, cml_get_status(ctx));
+}
+
+static void test_trainer_null_optimizer_errors(void) {
+    cml_tensor_t *params[2];
+    TEST_ASSERT_NULL(cml_trainer_init(ctx, NULL, test_forward, params, 0, NULL));
     TEST_ASSERT_EQUAL(CML_INVALID_ARG, cml_get_status(ctx));
 }
 
@@ -70,7 +80,8 @@ static void test_trainer_fit_decreases_loss(void) {
     float before = cml_tensor_get(init_loss, 0, 0);
     cml_tape_clear(ctx);
 
-    cml_trainer_t *trainer = cml_trainer_init(ctx, &model, test_forward, params, n, 0.05f);
+    cml_optimizer_t *opt = cml_optimizer_sgd(ctx, 0.05f);
+    cml_trainer_t *trainer = cml_trainer_init(ctx, &model, test_forward, params, n, opt);
     cml_trainer_fit(ctx, trainer, x, y, 50, false);
 
     cml_tensor_t *final_loss = test_forward(ctx, &model, x, y);
@@ -86,7 +97,8 @@ static void test_trainer_fit_null_ctx_no_crash(void) {
     test_model_t model = { cml_linear_init(ctx, 1, 1) };
     cml_tensor_t *params[2];
     size_t n = cml_linear_collect_params(model.layer, params, 0);
-    cml_trainer_t *trainer = cml_trainer_init(ctx, &model, test_forward, params, n, 0.01f);
+    cml_optimizer_t *opt = cml_optimizer_sgd(ctx, 0.01f);
+    cml_trainer_t *trainer = cml_trainer_init(ctx, &model, test_forward, params, n, opt);
     cml_trainer_fit(NULL, trainer, x, y, 5, false); /* should not crash */
     TEST_ASSERT_EQUAL(CML_OK, cml_get_status(ctx));
 }
@@ -97,6 +109,7 @@ int main(void) {
     RUN_TEST(test_trainer_init_not_null);
     RUN_TEST(test_trainer_null_ctx_returns_null);
     RUN_TEST(test_trainer_null_loss_fn_errors);
+    RUN_TEST(test_trainer_null_optimizer_errors);
 
     RUN_TEST(test_trainer_fit_decreases_loss);
     RUN_TEST(test_trainer_fit_null_ctx_no_crash);

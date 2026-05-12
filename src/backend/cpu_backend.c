@@ -205,6 +205,36 @@ static cml_status_t cpu_accum_scaled(void *state,
     return CML_OK;
 }
 
+static cml_status_t cpu_adam_step(void *state,
+                                  float *p, size_t p_stride,
+                                  float *m, size_t m_stride,
+                                  float *v, size_t v_stride,
+                                  const float *g, size_t g_stride,
+                                  size_t rows, size_t cols,
+                                  float lr, float beta1, float beta2, float eps,
+                                  float bc1, float bc2) {
+    (void)state;
+    const float one_minus_b1 = 1.0f - beta1;
+    const float one_minus_b2 = 1.0f - beta2;
+    for (size_t r = 0; r < rows; r++) {
+        float *pr = p + r * p_stride;
+        float *mr = m + r * m_stride;
+        float *vr = v + r * v_stride;
+        const float *gr = g + r * g_stride;
+        for (size_t c = 0; c < cols; c++) {
+            float gv = gr[c];
+            float new_m = beta1 * mr[c] + one_minus_b1 * gv;
+            float new_v = beta2 * vr[c] + one_minus_b2 * gv * gv;
+            mr[c] = new_m;
+            vr[c] = new_v;
+            float m_hat = new_m / bc1;
+            float v_hat = new_v / bc2;
+            pr[c] -= lr * m_hat / (sqrtf(v_hat) + eps);
+        }
+    }
+    return CML_OK;
+}
+
 static cml_status_t cpu_add_bias(void *state,
                                  float *out, size_t out_stride,
                                  const float *a, size_t a_stride,
@@ -239,4 +269,5 @@ const cml_backend_ops_t cml_cpu_backend_ops = {
     .sum_rows = cpu_sum_rows,
     .accum_scaled = cpu_accum_scaled,
     .add_bias = cpu_add_bias,
+    .adam_step = cpu_adam_step,
 };

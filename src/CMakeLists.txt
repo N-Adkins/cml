@@ -5,7 +5,7 @@ target_sources(cml PRIVATE
     linear.c
     loss.c
     nn.c
-    sgd.c
+    optimizer.c
     tape.c
     tensor.c
     trainer.c

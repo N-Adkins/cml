@@ -5,7 +5,7 @@
 #include "linear.h"
 #include "loss.h"
 #include "nn.h"
-#include "sgd.h"
+#include "optimizer.h"
 #include "tape.h"
 #include "tensor.h"
 #include "trainer.h"

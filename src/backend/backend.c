@@ -607,6 +607,61 @@ fail:
     return status;
 }
 
+cml_status_t cml_backend_adam_step(cml_context_t *ctx,
+                                   cml_tensor_t *p, cml_tensor_t *m, cml_tensor_t *v,
+                                   const cml_tensor_t *g,
+                                   float lr, float beta1, float beta2, float eps,
+                                   float bc1, float bc2) {
+    if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;
+    if (ctx->status != CML_OK) return ctx->status;
+    if (ctx->backend_ops->adam_step == NULL) return CML_INVALID_ARG;
+    cml_status_t status;
+    if (ctx->backend_ops->uses_device) {
+        status = ensure_device(ctx, p);
+        if (status != CML_OK) goto fail;
+        status = ensure_device(ctx, m);
+        if (status != CML_OK) goto fail;
+        status = ensure_device(ctx, v);
+        if (status != CML_OK) goto fail;
+        status = ensure_device(ctx, g);
+        if (status != CML_OK) goto fail;
+    } else {
+        status = ensure_host(ctx, p);
+        if (status != CML_OK) goto fail;
+        status = ensure_host(ctx, m);
+        if (status != CML_OK) goto fail;
+        status = ensure_host(ctx, v);
+        if (status != CML_OK) goto fail;
+        status = ensure_host(ctx, g);
+        if (status != CML_OK) goto fail;
+    }
+
+    status = ctx->backend_ops->adam_step(
+        ctx->backend_state,
+        tensor_ptr(ctx, p), p->stride,
+        tensor_ptr(ctx, m), m->stride,
+        tensor_ptr(ctx, v), v->stride,
+        tensor_const_ptr(ctx, g), g->stride,
+        p->rows, p->cols,
+        lr, beta1, beta2, eps, bc1, bc2);
+    if (status != CML_OK) goto fail;
+
+    if (ctx->backend_ops->uses_device) {
+        mark_device_write(p);
+        mark_device_write(m);
+        mark_device_write(v);
+    } else {
+        mark_host_write(p);
+        mark_host_write(m);
+        mark_host_write(v);
+    }
+    return CML_OK;
+
+fail:
+    set_backend_error(ctx, status, "backend adam_step failed");
+    return status;
+}
+
 cml_status_t cml_backend_add_bias(cml_context_t *ctx, cml_tensor_t *out,
                                   const cml_tensor_t *a, const cml_tensor_t *b) {
     if (ctx == NULL || ctx->backend_ops == NULL) return CML_INVALID_ARG;

@@ -26,7 +26,7 @@ int main(void) {
     cml_context_t *ctx = cml_init_with_backend(1024 * 1024, CML_BACKEND_CUDA);
     if (ctx == NULL) return 1;
 
-    const size_t n_samples = 512;
+    const size_t n_samples = 1024;
     const float x_min = -2.0f;
     const float x_max = 2.0f;
 
@@ -42,13 +42,13 @@ int main(void) {
 
     cml_module_t *l1 = cml_nn_linear(ctx, 1, 32);
     cml_module_t *r1 = cml_nn_relu(ctx);
-    cml_module_t *l2 = cml_nn_linear(ctx, 32, 64);
+    cml_module_t *l2 = cml_nn_linear(ctx, 32, 128);
     cml_module_t *r2 = cml_nn_relu(ctx);
-    cml_module_t *l3 = cml_nn_linear(ctx, 64, 512);
+    cml_module_t *l3 = cml_nn_linear(ctx, 128, 1024);
     cml_module_t *r3 = cml_nn_relu(ctx);
-    cml_module_t *l4 = cml_nn_linear(ctx, 512, 64);
+    cml_module_t *l4 = cml_nn_linear(ctx, 1024, 128);
     cml_module_t *r4 = cml_nn_relu(ctx);
-    cml_module_t *l5 = cml_nn_linear(ctx, 64, 32);
+    cml_module_t *l5 = cml_nn_linear(ctx, 128, 32);
     cml_module_t *r5 = cml_nn_relu(ctx);
     cml_module_t *l6 = cml_nn_linear(ctx, 32, 1);
     cml_module_t *layers[] = { l1, r1, l2, r2, l3, r3, l4, r4, l5, r5, l6 };
@@ -56,11 +56,12 @@ int main(void) {
     model_t model = { cml_nn_sequential(ctx, layers, 11) };
 
     const size_t n_params = cml_module_param_count(model.net);
-    cml_tensor_t **params = malloc(sizeof(cml_tensor_t*) * n_params);;
+    cml_tensor_t **params = malloc(sizeof(cml_tensor_t*) * n_params);
     cml_module_collect_params(model.net, params, 0);
 
-    cml_trainer_t *trainer = cml_trainer_init(ctx, &model, forward, params, n_params, 0.1f);
-    cml_trainer_fit(ctx, trainer, x_train, y_train, 5000, true);
+    cml_optimizer_t *opt = cml_optimizer_adam(ctx, model.net, 0.001f, 0.9f, 0.999f, 1e-8f);
+    cml_trainer_t *trainer = cml_trainer_init(ctx, &model, forward, params, n_params, opt);
+    cml_trainer_fit(ctx, trainer, x_train, y_train, 1000, true);
 
     cml_tensor_t *pred = cml_module_forward(ctx, model.net, x_train);
 
