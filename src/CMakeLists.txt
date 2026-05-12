@@ -2,6 +2,7 @@ target_sources(cml PRIVATE
     backend/backend.c
     backend/cpu_backend.c
     context.c
+    data.c
     linear.c
     loss.c
     nn.c

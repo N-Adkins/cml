@@ -41,8 +41,15 @@ int main(void) {
     cml_optimizer_t *opt = cml_optimizer_sgd(ctx, 0.05f);
     cml_trainer_t *trainer = cml_trainer_init(ctx, &model, linreg_forward,
                                               params, n_params, opt);
+    cml_dataset_t *dataset = cml_dataset_from_tensors(ctx, x_train, y_train);
+    cml_data_loader_t *loader = cml_data_loader_init(ctx, dataset, 4, true);
+    if (dataset == NULL || loader == NULL) {
+        fprintf(stderr, "dataset setup failed: %s\n", cml_get_error_msg(ctx));
+        cml_deinit(ctx);
+        return 1;
+    }
 
-    cml_trainer_fit(ctx, trainer, x_train, y_train, 1000, true);
+    cml_trainer_fit_loader(ctx, trainer, loader, 1000, true);
     if (cml_get_status(ctx) != CML_OK) {
         fprintf(stderr, "\ntraining failed: %s\n", cml_get_error_msg(ctx));
         cml_deinit(ctx);

@@ -1,0 +1,664 @@
+#include "data.h"
+#include "context.h"
+
+#include <ctype.h>
+#include <errno.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define CML_DATA_CSV_LINE_MAX 8192
+
+static char *cml_dataset_alloc_string(cml_context_t *ctx, const char *src, size_t len) {
+    if (len == SIZE_MAX) {
+        cml_context_error(ctx, CML_INVALID_ARG, "string length overflow");
+        return NULL;
+    }
+    char *dst = cml_arena_alloc(&ctx->arena, len + 1);
+    if (dst == NULL) {
+        cml_context_error(ctx, CML_OUT_OF_MEMORY, "string allocation failed");
+        return NULL;
+    }
+    memcpy(dst, src, len);
+    dst[len] = '\0';
+    return dst;
+}
+
+static bool cml_dataset_alloc_indexed_names(cml_context_t *ctx, const char *prefix,
+                                            size_t count, const char ***names_out) {
+    if (count == 0) {
+        *names_out = NULL;
+        return true;
+    }
+    if (count > SIZE_MAX / sizeof(const char *)) {
+        cml_context_error(ctx, CML_INVALID_ARG, "column count overflow");
+        return false;
+    }
+
+    const char **names = cml_arena_alloc(&ctx->arena, count * sizeof(const char *));
+    if (names == NULL) {
+        cml_context_error(ctx, CML_OUT_OF_MEMORY, "column name array allocation failed");
+        return false;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        int needed = snprintf(NULL, 0, "%s_%zu", prefix, i);
+        if (needed < 0) {
+            cml_context_error(ctx, CML_INVALID_ARG, "failed to format column name");
+            return false;
+        }
+        size_t len = (size_t)needed;
+        if (len == SIZE_MAX) {
+            cml_context_error(ctx, CML_INVALID_ARG, "column name length overflow");
+            return false;
+        }
+
+        char *name = cml_arena_alloc(&ctx->arena, len + 1);
+        if (name == NULL) {
+            cml_context_error(ctx, CML_OUT_OF_MEMORY, "column name allocation failed");
+            return false;
+        }
+        int written = snprintf(name, len + 1, "%s_%zu", prefix, i);
+        if (written != needed) {
+            cml_context_error(ctx, CML_INVALID_ARG, "failed to write column name");
+            return false;
+        }
+        names[i] = name;
+    }
+
+    *names_out = names;
+    return true;
+}
+
+static bool cml_dataset_set_default_names(cml_context_t *ctx, cml_dataset_t *dataset) {
+    if (!cml_dataset_alloc_indexed_names(ctx, "feature", dataset->num_features, &dataset->feature_names)) {
+        return false;
+    }
+    if (!cml_dataset_alloc_indexed_names(ctx, "target", dataset->num_targets, &dataset->target_names)) {
+        return false;
+    }
+    return true;
+}
+
+static bool cml_csv_line_too_long(const char *line, FILE *file) {
+    size_t len = strlen(line);
+    if (len == 0) return false;
+    if (line[len - 1] == '\n') return false;
+    return !feof(file);
+}
+
+static bool cml_csv_line_is_blank(const char *line) {
+    const unsigned char *p = (const unsigned char *)line;
+    while (*p != '\0') {
+        if (!isspace(*p)) return false;
+        p++;
+    }
+    return true;
+}
+
+static bool cml_csv_parse_row(const char *line, size_t expected_cols, float *values) {
+    const char *p = line;
+    for (size_t col = 0; col < expected_cols; col++) {
+        while (*p == ' ' || *p == '\t') {
+            p++;
+        }
+
+        if (*p == '\0' || *p == '\n' || *p == '\r') {
+            return false;
+        }
+
+        errno = 0;
+        char *endptr = NULL;
+        float value = strtof(p, &endptr);
+        if (p == endptr || errno == ERANGE) {
+            return false;
+        }
+        p = endptr;
+
+        while (*p == ' ' || *p == '\t') {
+            p++;
+        }
+
+        if (col + 1 < expected_cols) {
+            if (*p != ',') {
+                return false;
+            }
+            p++;
+        } else {
+            while (*p == ' ' || *p == '\t') {
+                p++;
+            }
+            if (*p != '\0' && *p != '\n' && *p != '\r') {
+                return false;
+            }
+        }
+
+        if (values != NULL) {
+            values[col] = value;
+        }
+    }
+
+    return true;
+}
+
+static bool cml_csv_count_rows(cml_context_t *ctx, FILE *file, size_t expected_cols,
+                               bool has_header, size_t *row_count) {
+    char line[CML_DATA_CSV_LINE_MAX];
+    bool header_consumed = !has_header;
+    size_t rows = 0;
+
+    while (fgets(line, sizeof(line), file) != NULL) {
+        if (cml_csv_line_too_long(line, file)) {
+            cml_context_error(ctx, CML_INVALID_ARG, "CSV line exceeds maximum length");
+            return false;
+        }
+        if (cml_csv_line_is_blank(line)) {
+            continue;
+        }
+        if (!header_consumed) {
+            header_consumed = true;
+            continue;
+        }
+        if (!cml_csv_parse_row(line, expected_cols, NULL)) {
+            cml_context_error(ctx, CML_INVALID_ARG, "CSV row has invalid format");
+            return false;
+        }
+        rows++;
+    }
+
+    *row_count = rows;
+    return true;
+}
+
+static bool cml_csv_parse_header_into_dataset(cml_context_t *ctx, const char *line,
+                                              cml_dataset_t *dataset) {
+    size_t expected_cols = dataset->num_features + dataset->num_targets;
+    const char *p = line;
+
+    for (size_t col = 0; col < expected_cols; col++) {
+        while (*p == ' ' || *p == '\t') {
+            p++;
+        }
+
+        if (*p == '\0' || *p == '\n' || *p == '\r') {
+            cml_context_error(ctx, CML_INVALID_ARG, "CSV header has too few columns");
+            return false;
+        }
+
+        const char *start = p;
+        while (*p != ',' && *p != '\0' && *p != '\n' && *p != '\r') {
+            p++;
+        }
+        const char *end = p;
+        while (end > start && (end[-1] == ' ' || end[-1] == '\t')) {
+            end--;
+        }
+        if (end == start) {
+            cml_context_error(ctx, CML_INVALID_ARG, "CSV header column name is empty");
+            return false;
+        }
+
+        char *name = cml_dataset_alloc_string(ctx, start, (size_t)(end - start));
+        if (name == NULL) return false;
+        if (col < dataset->num_features) {
+            dataset->feature_names[col] = name;
+        } else {
+            dataset->target_names[col - dataset->num_features] = name;
+        }
+
+        if (col + 1 < expected_cols) {
+            if (*p != ',') {
+                cml_context_error(ctx, CML_INVALID_ARG, "CSV header has too few columns");
+                return false;
+            }
+            p++;
+        } else {
+            while (*p == ' ' || *p == '\t') {
+                p++;
+            }
+            if (*p != '\0' && *p != '\n' && *p != '\r') {
+                cml_context_error(ctx, CML_INVALID_ARG, "CSV header has too many columns");
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+static bool cml_csv_fill_dataset(cml_context_t *ctx, FILE *file,
+                                 bool has_header, cml_dataset_t *dataset) {
+    char line[CML_DATA_CSV_LINE_MAX];
+    bool header_consumed = !has_header;
+    size_t row = 0;
+    size_t feature_cols = dataset->num_features;
+    size_t target_cols = dataset->num_targets;
+    size_t expected_cols = feature_cols + target_cols;
+
+    if (expected_cols > SIZE_MAX / sizeof(float)) {
+        cml_context_error(ctx, CML_INVALID_ARG, "CSV column count overflow");
+        return false;
+    }
+
+    float *values = (float *)malloc(expected_cols * sizeof(float));
+    if (values == NULL) {
+        cml_context_error(ctx, CML_OUT_OF_MEMORY, "failed to allocate CSV parse buffer");
+        return false;
+    }
+
+    float *feature_data = cml_tensor_data(dataset->features);
+    float *target_data = cml_tensor_data(dataset->targets);
+    if (feature_data == NULL || target_data == NULL) {
+        free(values);
+        return false;
+    }
+
+    while (fgets(line, sizeof(line), file) != NULL) {
+        if (cml_csv_line_too_long(line, file)) {
+            cml_context_error(ctx, CML_INVALID_ARG, "CSV line exceeds maximum length");
+            free(values);
+            return false;
+        }
+        if (cml_csv_line_is_blank(line)) {
+            continue;
+        }
+        if (!header_consumed) {
+            if (!cml_csv_parse_header_into_dataset(ctx, line, dataset)) {
+                free(values);
+                return false;
+            }
+            header_consumed = true;
+            continue;
+        }
+        if (!cml_csv_parse_row(line, expected_cols, values)) {
+            cml_context_error(ctx, CML_INVALID_ARG, "CSV row has invalid format");
+            free(values);
+            return false;
+        }
+        if (row >= dataset->num_samples) {
+            cml_context_error(ctx, CML_INVALID_ARG, "CSV row count changed during load");
+            free(values);
+            return false;
+        }
+
+        for (size_t col = 0; col < feature_cols; col++) {
+            feature_data[row * feature_cols + col] = values[col];
+        }
+        for (size_t col = 0; col < target_cols; col++) {
+            target_data[row * target_cols + col] = values[feature_cols + col];
+        }
+
+        row++;
+    }
+
+    free(values);
+    if (row != dataset->num_samples) {
+        cml_context_error(ctx, CML_INVALID_ARG, "CSV row count mismatch");
+        return false;
+    }
+    return true;
+}
+
+cml_dataset_t *cml_dataset_from_tensors(cml_context_t *ctx,
+                                        cml_tensor_t *features,
+                                        cml_tensor_t *targets) {
+    if (ctx == NULL) return NULL;
+    if (ctx->status != CML_OK) return NULL;
+    if (features == NULL || targets == NULL) {
+        cml_context_error(ctx, CML_INVALID_ARG, "dataset tensor argument is NULL");
+        return NULL;
+    }
+
+    size_t feature_rows = cml_tensor_rows(features);
+    size_t target_rows = cml_tensor_rows(targets);
+    size_t feature_cols = cml_tensor_cols(features);
+    size_t target_cols = cml_tensor_cols(targets);
+
+    if (feature_rows == 0 || target_rows == 0 || feature_cols == 0 || target_cols == 0) {
+        cml_context_error(ctx, CML_INVALID_ARG, "dataset tensors must be non-empty");
+        return NULL;
+    }
+    if (feature_rows != target_rows) {
+        cml_context_error(ctx, CML_INVALID_ARG, "dataset feature/target row mismatch");
+        return NULL;
+    }
+
+    cml_dataset_t *dataset = cml_arena_alloc(&ctx->arena, sizeof(struct cml_dataset_s));
+    if (dataset == NULL) {
+        cml_context_error(ctx, CML_OUT_OF_MEMORY, "dataset allocation failed");
+        return NULL;
+    }
+
+    dataset->features = features;
+    dataset->targets = targets;
+    dataset->num_samples = feature_rows;
+    dataset->num_features = feature_cols;
+    dataset->num_targets = target_cols;
+    dataset->feature_names = NULL;
+    dataset->target_names = NULL;
+    if (!cml_dataset_set_default_names(ctx, dataset)) {
+        return NULL;
+    }
+    return dataset;
+}
+
+cml_dataset_t *cml_dataset_load_csv(cml_context_t *ctx, const char *path,
+                                    size_t feature_cols, size_t target_cols,
+                                    bool has_header) {
+    if (ctx == NULL) return NULL;
+    if (ctx->status != CML_OK) return NULL;
+    if (path == NULL) {
+        cml_context_error(ctx, CML_INVALID_ARG, "CSV path is NULL");
+        return NULL;
+    }
+    if (feature_cols == 0 || target_cols == 0) {
+        cml_context_error(ctx, CML_INVALID_ARG, "CSV feature and target columns must be > 0");
+        return NULL;
+    }
+    if (feature_cols > SIZE_MAX - target_cols) {
+        cml_context_error(ctx, CML_INVALID_ARG, "CSV column count overflow");
+        return NULL;
+    }
+
+    size_t expected_cols = feature_cols + target_cols;
+    FILE *file = fopen(path, "r");
+    if (file == NULL) {
+        cml_context_error(ctx, CML_INVALID_ARG, "failed to open CSV file");
+        return NULL;
+    }
+
+    size_t row_count = 0;
+    if (!cml_csv_count_rows(ctx, file, expected_cols, has_header, &row_count)) {
+        fclose(file);
+        return NULL;
+    }
+    if (row_count == 0) {
+        fclose(file);
+        cml_context_error(ctx, CML_INVALID_ARG, "CSV contains no data rows");
+        return NULL;
+    }
+
+    cml_tensor_t *features = cml_tensor_init(ctx, row_count, feature_cols);
+    cml_tensor_t *targets = cml_tensor_init(ctx, row_count, target_cols);
+    if (features == NULL || targets == NULL) {
+        fclose(file);
+        return NULL;
+    }
+
+    cml_dataset_t *dataset = cml_dataset_from_tensors(ctx, features, targets);
+    if (dataset == NULL) {
+        fclose(file);
+        return NULL;
+    }
+
+    rewind(file);
+    if (!cml_csv_fill_dataset(ctx, file, has_header, dataset)) {
+        fclose(file);
+        return NULL;
+    }
+    fclose(file);
+
+    return dataset;
+}
+
+size_t cml_dataset_num_samples(const cml_dataset_t *dataset) {
+    if (dataset == NULL) return 0;
+    return dataset->num_samples;
+}
+
+size_t cml_dataset_num_features(const cml_dataset_t *dataset) {
+    if (dataset == NULL) return 0;
+    return dataset->num_features;
+}
+
+size_t cml_dataset_num_targets(const cml_dataset_t *dataset) {
+    if (dataset == NULL) return 0;
+    return dataset->num_targets;
+}
+
+cml_tensor_t *cml_dataset_features(const cml_dataset_t *dataset) {
+    if (dataset == NULL) return NULL;
+    return dataset->features;
+}
+
+cml_tensor_t *cml_dataset_targets(const cml_dataset_t *dataset) {
+    if (dataset == NULL) return NULL;
+    return dataset->targets;
+}
+
+const char *cml_dataset_feature_name(const cml_dataset_t *dataset, size_t feature_index) {
+    if (dataset == NULL) return NULL;
+    if (feature_index >= dataset->num_features) return NULL;
+    return dataset->feature_names[feature_index];
+}
+
+const char *cml_dataset_target_name(const cml_dataset_t *dataset, size_t target_index) {
+    if (dataset == NULL) return NULL;
+    if (target_index >= dataset->num_targets) return NULL;
+    return dataset->target_names[target_index];
+}
+
+void cml_dataset_print_rows(cml_context_t *ctx,
+                            const cml_dataset_t *dataset,
+                            size_t start_row,
+                            size_t max_rows,
+                            FILE *stream) {
+    if (ctx == NULL) return;
+    if (ctx->status != CML_OK) return;
+    if (dataset == NULL) {
+        cml_context_error(ctx, CML_INVALID_ARG, "dataset is NULL");
+        return;
+    }
+    if (start_row >= dataset->num_samples) {
+        cml_context_error(ctx, CML_INVALID_ARG, "start_row is out of range");
+        return;
+    }
+
+    FILE *out = (stream != NULL) ? stream : stdout;
+    fprintf(out, "row");
+    for (size_t col = 0; col < dataset->num_features; col++) {
+        fprintf(out, ",%s", dataset->feature_names[col]);
+    }
+    for (size_t col = 0; col < dataset->num_targets; col++) {
+        fprintf(out, ",%s", dataset->target_names[col]);
+    }
+    fputc('\n', out);
+
+    size_t remaining = dataset->num_samples - start_row;
+    size_t rows_to_print = (max_rows < remaining) ? max_rows : remaining;
+    for (size_t row_offset = 0; row_offset < rows_to_print; row_offset++) {
+        size_t row = start_row + row_offset;
+        fprintf(out, "%zu", row);
+        for (size_t col = 0; col < dataset->num_features; col++) {
+            fprintf(out, ",%.6f", (double)cml_tensor_get(dataset->features, row, col));
+        }
+        for (size_t col = 0; col < dataset->num_targets; col++) {
+            fprintf(out, ",%.6f", (double)cml_tensor_get(dataset->targets, row, col));
+        }
+        fputc('\n', out);
+    }
+}
+
+cml_data_loader_t *cml_data_loader_init(cml_context_t *ctx,
+                                        cml_dataset_t *dataset,
+                                        size_t batch_size,
+                                        bool shuffle) {
+    if (ctx == NULL) return NULL;
+    if (ctx->status != CML_OK) return NULL;
+    if (dataset == NULL) {
+        cml_context_error(ctx, CML_INVALID_ARG, "dataset is NULL");
+        return NULL;
+    }
+    if (batch_size == 0) {
+        cml_context_error(ctx, CML_INVALID_ARG, "batch_size must be > 0");
+        return NULL;
+    }
+
+    cml_data_loader_t *loader = cml_arena_alloc(&ctx->arena, sizeof(struct cml_data_loader_s));
+    if (loader == NULL) {
+        cml_context_error(ctx, CML_OUT_OF_MEMORY, "data loader allocation failed");
+        return NULL;
+    }
+
+    loader->dataset = dataset;
+    loader->batch_size = batch_size;
+    loader->shuffle = shuffle;
+    loader->position = 0;
+    loader->indices = NULL;
+    loader->shuffle_features_batch = NULL;
+    loader->shuffle_targets_batch = NULL;
+
+    if (shuffle) {
+        if (dataset->num_samples > SIZE_MAX / sizeof(size_t)) {
+            cml_context_error(ctx, CML_INVALID_ARG, "dataset is too large");
+            return NULL;
+        }
+        loader->indices = cml_arena_alloc(&ctx->arena, dataset->num_samples * sizeof(size_t));
+        if (loader->indices == NULL) {
+            cml_context_error(ctx, CML_OUT_OF_MEMORY, "failed to allocate shuffle indices");
+            return NULL;
+        }
+
+        loader->shuffle_features_batch = cml_tensor_init(ctx, batch_size, dataset->num_features);
+        loader->shuffle_targets_batch = cml_tensor_init(ctx, batch_size, dataset->num_targets);
+        if (loader->shuffle_features_batch == NULL || loader->shuffle_targets_batch == NULL) {
+            return NULL;
+        }
+    }
+
+    cml_data_loader_reset(ctx, loader);
+    return loader;
+}
+
+void cml_data_loader_prepare_device(cml_context_t *ctx, cml_data_loader_t *loader) {
+    if (ctx == NULL || loader == NULL) return;
+    if (ctx->status != CML_OK) return;
+
+    if (!loader->shuffle || loader->indices == NULL) {
+        cml_tensor_to_device(ctx, loader->dataset->features);
+        cml_tensor_to_device(ctx, loader->dataset->targets);
+        return;
+    }
+
+    cml_tensor_to_device(ctx, loader->shuffle_features_batch);
+    cml_tensor_to_device(ctx, loader->shuffle_targets_batch);
+}
+
+void cml_data_loader_reset(cml_context_t *ctx, cml_data_loader_t *loader) {
+    if (ctx == NULL || loader == NULL) return;
+    if (ctx->status != CML_OK) return;
+
+    loader->position = 0;
+
+    if (!loader->shuffle || loader->indices == NULL) return;
+
+    for (size_t i = 0; i < loader->dataset->num_samples; i++) {
+        loader->indices[i] = i;
+    }
+
+    for (size_t i = loader->dataset->num_samples; i > 1; i--) {
+        size_t idx = i - 1;
+        double ratio = (double)rand() / ((double)RAND_MAX + 1.0);
+        size_t swap_idx = (size_t)(ratio * (double)i);
+        if (swap_idx > idx) {
+            swap_idx = idx;
+        }
+        size_t tmp = loader->indices[idx];
+        loader->indices[idx] = loader->indices[swap_idx];
+        loader->indices[swap_idx] = tmp;
+    }
+}
+
+bool cml_data_loader_next(cml_context_t *ctx,
+                          cml_data_loader_t *loader,
+                          cml_tensor_t **features_batch,
+                          cml_tensor_t **targets_batch) {
+    if (ctx == NULL) return false;
+    if (ctx->status != CML_OK) return false;
+    if (loader == NULL || features_batch == NULL || targets_batch == NULL) {
+        cml_context_error(ctx, CML_INVALID_ARG, "data loader argument is NULL");
+        return false;
+    }
+
+    *features_batch = NULL;
+    *targets_batch = NULL;
+
+    if (loader->position >= loader->dataset->num_samples) {
+        return false;
+    }
+
+    size_t remaining = loader->dataset->num_samples - loader->position;
+    size_t batch_rows = (remaining < loader->batch_size) ? remaining : loader->batch_size;
+
+    size_t feature_cols = loader->dataset->num_features;
+    size_t target_cols = loader->dataset->num_targets;
+
+    if (!loader->shuffle || loader->indices == NULL) {
+        size_t source_row = loader->position;
+        cml_tensor_t *xb = cml_tensor_view(ctx, loader->dataset->features, source_row, 0,
+                                           batch_rows, feature_cols);
+        cml_tensor_t *yb = cml_tensor_view(ctx, loader->dataset->targets, source_row, 0,
+                                           batch_rows, target_cols);
+        if (xb == NULL || yb == NULL) {
+            return false;
+        }
+        *features_batch = xb;
+        *targets_batch = yb;
+    } else {
+        const float *features_data = cml_tensor_const_data(loader->dataset->features);
+        const float *targets_data = cml_tensor_const_data(loader->dataset->targets);
+        float *xb_data = cml_tensor_data(loader->shuffle_features_batch);
+        float *yb_data = cml_tensor_data(loader->shuffle_targets_batch);
+        if (features_data == NULL || targets_data == NULL || xb_data == NULL || yb_data == NULL) {
+            return false;
+        }
+
+        for (size_t row = 0; row < batch_rows; row++) {
+            size_t source_row = loader->indices[loader->position + row];
+            memcpy(xb_data + row * feature_cols,
+                   features_data + source_row * feature_cols,
+                   feature_cols * sizeof(float));
+            memcpy(yb_data + row * target_cols,
+                   targets_data + source_row * target_cols,
+                   target_cols * sizeof(float));
+        }
+
+        if (batch_rows == loader->batch_size) {
+            *features_batch = loader->shuffle_features_batch;
+            *targets_batch = loader->shuffle_targets_batch;
+        } else {
+            cml_tensor_t *xb = cml_tensor_view(ctx, loader->shuffle_features_batch, 0, 0,
+                                               batch_rows, feature_cols);
+            cml_tensor_t *yb = cml_tensor_view(ctx, loader->shuffle_targets_batch, 0, 0,
+                                               batch_rows, target_cols);
+            if (xb == NULL || yb == NULL) {
+                return false;
+            }
+            *features_batch = xb;
+            *targets_batch = yb;
+        }
+    }
+
+    loader->position += batch_rows;
+    return true;
+}
+
+size_t cml_data_loader_batch_size(const cml_data_loader_t *loader) {
+    if (loader == NULL) return 0;
+    return loader->batch_size;
+}
+
+size_t cml_data_loader_num_batches(const cml_data_loader_t *loader) {
+    if (loader == NULL || loader->batch_size == 0) return 0;
+    size_t batches = loader->dataset->num_samples / loader->batch_size;
+    if (loader->dataset->num_samples % loader->batch_size != 0) {
+        batches++;
+    }
+    return batches;
+}
+
+bool cml_data_loader_shuffle(const cml_data_loader_t *loader) {
+    if (loader == NULL) return false;
+    return loader->shuffle;
+}

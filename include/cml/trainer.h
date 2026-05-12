@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "context.h"
+#include "data.h"
 #include "optimizer.h"
 #include "tensor.h"
 
@@ -28,5 +29,10 @@ cml_trainer_t *cml_trainer_init(cml_context_t *ctx,
 void cml_trainer_fit(cml_context_t *ctx, cml_trainer_t *trainer,
                      cml_tensor_t *x, cml_tensor_t *y,
                      size_t epochs, bool verbose);
+
+// Runs the training loop over mini-batches produced by a data loader.
+void cml_trainer_fit_loader(cml_context_t *ctx, cml_trainer_t *trainer,
+                            cml_data_loader_t *loader,
+                            size_t epochs, bool verbose);
 
 #endif
