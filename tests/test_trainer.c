@@ -35,7 +35,7 @@ static cml_tensor_t *test_forward(cml_context_t *c, void *model,
 static void test_trainer_init_not_null(void) {
     test_model_t model = { cml_linear_init(ctx, 1, 1) };
     cml_tensor_t *params[2];
-    size_t n = cml_linear_collect_params(model.layer, params, 0);
+    size_t n = cml_linear_collect_params(model.layer, params, 2, 0);
     cml_optimizer_t *opt = cml_optimizer_sgd(ctx, 0.01f);
     cml_trainer_t *trainer = cml_trainer_init(ctx, &model, test_forward, params, n, opt);
     TEST_ASSERT_NOT_NULL(trainer);
@@ -76,7 +76,7 @@ static void test_trainer_fit_decreases_loss(void) {
     cml_tensor_set(cml_linear_weight(model.layer), 0, 0, 10.0f);
 
     cml_tensor_t *params[2];
-    size_t n = cml_linear_collect_params(model.layer, params, 0);
+    size_t n = cml_linear_collect_params(model.layer, params, 2, 0);
 
     cml_tensor_t *init_loss = test_forward(ctx, &model, x, y);
     float before = cml_tensor_get(init_loss, 0, 0);
@@ -98,7 +98,7 @@ static void test_trainer_fit_null_ctx_no_crash(void) {
     cml_tensor_t *y = cml_tensor_init(ctx, 1, 1);
     test_model_t model = { cml_linear_init(ctx, 1, 1) };
     cml_tensor_t *params[2];
-    size_t n = cml_linear_collect_params(model.layer, params, 0);
+    size_t n = cml_linear_collect_params(model.layer, params, 2, 0);
     cml_optimizer_t *opt = cml_optimizer_sgd(ctx, 0.01f);
     cml_trainer_t *trainer = cml_trainer_init(ctx, &model, test_forward, params, n, opt);
     cml_trainer_fit(NULL, trainer, x, y, 5, false); /* should not crash */
@@ -119,7 +119,7 @@ static void test_trainer_fit_loader_decreases_loss(void) {
     cml_tensor_set(cml_linear_bias(model.layer), 0, 0, 5.0f);
 
     cml_tensor_t *params[2];
-    size_t n = cml_linear_collect_params(model.layer, params, 0);
+    size_t n = cml_linear_collect_params(model.layer, params, 2, 0);
     cml_optimizer_t *opt = cml_optimizer_sgd(ctx, 0.02f);
     cml_trainer_t *trainer = cml_trainer_init(ctx, &model, test_forward, params, n, opt);
     TEST_ASSERT_NOT_NULL(trainer);

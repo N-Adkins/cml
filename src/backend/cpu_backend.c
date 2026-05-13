@@ -162,7 +162,9 @@ static cml_status_t cpu_unary_grad(void *state,
             float deriv;
             switch (op) {
                 case CML_UNARY_LOG:
-                    deriv = xv != 0.0f ? 1.0f / xv : 0.0f;
+                    // Mirror the forward floor at FLT_MIN so the gradient does
+                    // not explode (or zero) at inputs the forward treated as FLT_MIN.
+                    deriv = 1.0f / (xv > FLT_MIN ? xv : FLT_MIN);
                     break;
                 case CML_UNARY_SIGMOID: {
                     float s = 1.0f / (1.0f + expf(-xv));

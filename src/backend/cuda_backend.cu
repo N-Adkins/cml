@@ -15,6 +15,9 @@
 typedef struct {
     cublasHandle_t cublas;
     float *sum_partials; // device-side scratch for deterministic sum
+    double *xent_row_loss_dev; // device-side per-row loss scratch for softmax_xent
+    double *xent_row_loss_host; // matching host buffer used to finalize the reduction
+    size_t xent_rows_cap; // capacity (in rows) of the buffers above
 } cml_cuda_state_t;
 
 static cml_status_t map_cuda_status(cudaError_t status) {
@@ -40,6 +43,29 @@ static int sum_grid_for(size_t total) {
     if (blocks > (size_t)CML_CUDA_SUM_MAX_BLOCKS) blocks = CML_CUDA_SUM_MAX_BLOCKS;
     if (blocks == 0) blocks = 1;
     return (int)blocks;
+}
+
+static cml_status_t ensure_xent_buffers(cml_cuda_state_t *state, size_t rows) {
+    if (rows <= state->xent_rows_cap) return CML_OK;
+    size_t new_cap = state->xent_rows_cap == 0 ? 64 : state->xent_rows_cap;
+    while (new_cap < rows) {
+        if (new_cap > SIZE_MAX / 2) { new_cap = rows; break; }
+        new_cap *= 2;
+    }
+    if (new_cap > SIZE_MAX / sizeof(double)) return CML_INVALID_ARG;
+
+    double *dev = NULL;
+    cudaError_t cu = cudaMalloc((void **)&dev, new_cap * sizeof(double));
+    if (cu != cudaSuccess) return map_cuda_status(cu);
+    double *host = (double *)malloc(new_cap * sizeof(double));
+    if (host == NULL) { cudaFree(dev); return CML_OUT_OF_MEMORY; }
+
+    if (state->xent_row_loss_dev != NULL) cudaFree(state->xent_row_loss_dev);
+    if (state->xent_row_loss_host != NULL) free(state->xent_row_loss_host);
+    state->xent_row_loss_dev = dev;
+    state->xent_row_loss_host = host;
+    state->xent_rows_cap = new_cap;
+    return CML_OK;
 }
 
 static __global__ void kernel_copy(float *dst, size_t dst_stride,
@@ -280,6 +306,9 @@ static cml_status_t cuda_init(void **state) {
     if (cuda_state == NULL) return CML_OUT_OF_MEMORY;
     cuda_state->cublas = NULL;
     cuda_state->sum_partials = NULL;
+    cuda_state->xent_row_loss_dev = NULL;
+    cuda_state->xent_row_loss_host = NULL;
+    cuda_state->xent_rows_cap = 0;
 
     cublasStatus_t cublas_status = cublasCreate(&cuda_state->cublas);
     if (cublas_status != CUBLAS_STATUS_SUCCESS) {
@@ -309,6 +338,8 @@ static cml_status_t cuda_init(void **state) {
 static void cuda_deinit(void *state) {
     if (state == NULL) return;
     cml_cuda_state_t *cuda_state = (cml_cuda_state_t *)state;
+    if (cuda_state->xent_row_loss_dev != NULL) cudaFree(cuda_state->xent_row_loss_dev);
+    if (cuda_state->xent_row_loss_host != NULL) free(cuda_state->xent_row_loss_host);
     if (cuda_state->sum_partials != NULL) cudaFree(cuda_state->sum_partials);
     if (cuda_state->cublas != NULL) cublasDestroy(cuda_state->cublas);
     free(cuda_state);
@@ -543,7 +574,9 @@ static __global__ void kernel_unary_grad(float *out, size_t out_stride,
     float gv = grad[r * grad_stride + c];
     float deriv;
     if (op == CML_UNARY_LOG) {
-        deriv = xv != 0.0f ? 1.0f / xv : 0.0f;
+        // Mirror the forward floor at FLT_MIN so the gradient stays finite at
+        // inputs that the forward also clamped.
+        deriv = 1.0f / (xv > FLT_MIN ? xv : FLT_MIN);
     } else if (op == CML_UNARY_SIGMOID) {
         float s = 1.0f / (1.0f + expf(-xv));
         deriv = s * (1.0f - s);
@@ -593,35 +626,32 @@ static cml_status_t cuda_softmax_xent_forward(void *state,
                                               const float *logits, size_t logits_stride,
                                               const float *targets, size_t targets_stride,
                                               size_t rows, size_t cols, float *loss_out) {
-    (void)state;
+    cml_cuda_state_t *cuda_state = (cml_cuda_state_t *)state;
     if (rows == 0 || cols == 0) {
         *loss_out = 0.0f;
         return CML_OK;
     }
 
-    double *row_loss_dev = NULL;
-    cudaError_t cu = cudaMalloc((void **)&row_loss_dev, rows * sizeof(double));
-    if (cu != cudaSuccess) return map_cuda_status(cu);
+    cml_status_t status = ensure_xent_buffers(cuda_state, rows);
+    if (status != CML_OK) return status;
 
     kernel_softmax_xent_forward<<<(int)rows, CML_CUDA_SOFTMAX_BLOCK>>>(
         softmax_out, softmax_stride,
         logits, logits_stride,
         targets, targets_stride,
-        cols, row_loss_dev);
-    cml_status_t status = check_launch();
-    if (status != CML_OK) { cudaFree(row_loss_dev); return status; }
+        cols, cuda_state->xent_row_loss_dev);
+    status = check_launch();
+    if (status != CML_OK) return status;
 
-    double *row_loss_host = (double *)malloc(rows * sizeof(double));
-    if (row_loss_host == NULL) { cudaFree(row_loss_dev); return CML_OUT_OF_MEMORY; }
     // cudaMemcpy is blocking and provides the host-visibility barrier
-    cu = cudaMemcpy(row_loss_host, row_loss_dev, rows * sizeof(double), cudaMemcpyDeviceToHost);
-    cudaFree(row_loss_dev);
-    if (cu != cudaSuccess) { free(row_loss_host); return map_cuda_status(cu); }
+    cudaError_t cu = cudaMemcpy(cuda_state->xent_row_loss_host,
+                                cuda_state->xent_row_loss_dev,
+                                rows * sizeof(double), cudaMemcpyDeviceToHost);
+    if (cu != cudaSuccess) return map_cuda_status(cu);
 
     double total = 0.0;
-    for (size_t r = 0; r < rows; r++) total += row_loss_host[r];
+    for (size_t r = 0; r < rows; r++) total += cuda_state->xent_row_loss_host[r];
     *loss_out = (float)(total / (double)rows);
-    free(row_loss_host);
     return CML_OK;
 }
 

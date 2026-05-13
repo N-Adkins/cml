@@ -161,7 +161,7 @@ static void test_adam_first_step_is_signed_lr(void) {
     // Build a 1x1 linear, force weights/bias to known values.
     cml_module_t *layer = cml_nn_linear(ctx, 1, 1);
     cml_tensor_t *params[2];
-    size_t n = cml_module_collect_params(layer, params, 0);
+    size_t n = cml_module_collect_params(layer, params, 2, 0);
     TEST_ASSERT_EQUAL_UINT(2, n);
 
     cml_tensor_set(params[0], 0, 0, 1.0f); // weight
@@ -189,7 +189,7 @@ static void test_adam_first_step_is_signed_lr(void) {
 static void test_adam_step_skips_null_grad(void) {
     cml_module_t *layer = cml_nn_linear(ctx, 1, 1);
     cml_tensor_t *params[2];
-    size_t n = cml_module_collect_params(layer, params, 0);
+    size_t n = cml_module_collect_params(layer, params, 2, 0);
 
     cml_tensor_set(params[0], 0, 0, 1.0f);
     cml_tensor_set(params[1], 0, 0, 2.0f);
@@ -206,7 +206,7 @@ static void test_adam_step_moves_toward_target(void) {
     // 100 steps of Adam should drive a 1x1 linear toward y = 2 for x = 1.
     cml_module_t *layer = cml_nn_linear(ctx, 1, 1);
     cml_tensor_t *params[2];
-    size_t n = cml_module_collect_params(layer, params, 0);
+    size_t n = cml_module_collect_params(layer, params, 2, 0);
     cml_tensor_set(params[0], 0, 0, 10.0f);
     cml_tensor_set(params[1], 0, 0, 0.0f);
 
@@ -236,7 +236,7 @@ static void test_adam_reset_restarts_bias_correction(void) {
     // NEXT step behaves like the first step on a fresh optimizer.
     cml_module_t *layer = cml_nn_linear(ctx, 1, 1);
     cml_tensor_t *params[2];
-    size_t n = cml_module_collect_params(layer, params, 0);
+    size_t n = cml_module_collect_params(layer, params, 2, 0);
     cml_tensor_set(params[0], 0, 0, 1.0f);
     cml_tensor_set(params[1], 0, 0, 0.0f);
 

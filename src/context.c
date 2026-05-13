@@ -20,7 +20,8 @@ cml_context_t *cml_init_with_backend(size_t start_size, cml_backend_t backend) {
     }
     ctx->status = CML_OK;
     ctx->error_msg = NULL;
-    ctx->backend_ops = NULL; // cml_backend_init populates this on success
+    ctx->backend_kind = backend; // cml_backend_init re-confirms on success
+    ctx->backend_ops = NULL;
     ctx->backend_state = NULL;
     ctx->device_allocs = NULL;
     ctx->tape_head = NULL;

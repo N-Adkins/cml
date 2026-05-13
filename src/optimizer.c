@@ -86,7 +86,7 @@ cml_optimizer_t *cml_optimizer_adam(cml_context_t *ctx, cml_module_t *module, fl
     }
 
     if (n_params > 0) {
-        cml_module_collect_params(module, params, 0);
+        cml_module_collect_params(module, params, n_params, 0);
 
         for (size_t i = 0; i < n_params; i++) {
             cml_tensor_t *param = params[i];
@@ -140,40 +140,36 @@ static void sgd_step(cml_optimizer_t *opt, cml_tensor_t **params, size_t n_param
     }
 }
 
-static cml_tensor_t **adam_find_moments(cml_optimizer_t *opt, cml_tensor_t *p,
-                                         cml_tensor_t **m_out, cml_tensor_t **v_out) {
-    for (size_t i = 0; i < opt->inner.adam.n; i++) {
-        if (opt->inner.adam.params[i] == p) {
-            *m_out = opt->inner.adam.m[i];
-            *v_out = opt->inner.adam.v[i];
-            return m_out;
-        }
-    }
-    return NULL;
-}
-
 static void adam_step(cml_optimizer_t *opt, cml_tensor_t **params, size_t n_params) {
     opt->inner.adam.t++;
 
     const float bc1 = 1.0f - powf(opt->inner.adam.beta1, (float)opt->inner.adam.t);
     const float bc2 = 1.0f - powf(opt->inner.adam.beta2, (float)opt->inner.adam.t);
 
+    // Adam relies on positional correspondence with the params snapshot it was
+    // built from. The caller must pass the same array (same order, same length)
+    // that was returned by cml_module_collect_params at construction time.
+    if (n_params != opt->inner.adam.n) {
+        if (n_params > 0) {
+            cml_context_error(params[0]->ctx, CML_INVALID_ARG,
+                              "adam: params count does not match optimizer registration");
+        }
+        return;
+    }
+
     for (size_t i = 0; i < n_params; i++) {
         cml_tensor_t *p = params[i];
         if (p == NULL) continue;
+        if (p != opt->inner.adam.params[i]) {
+            cml_context_error(p->ctx, CML_INVALID_ARG,
+                              "adam: params order does not match optimizer registration");
+            return;
+        }
         cml_tensor_t *gradient = cml_tensor_grad(p);
         if (gradient == NULL) continue;
 
-        cml_tensor_t *m = NULL;
-        cml_tensor_t *v = NULL;
-        if (adam_find_moments(opt, p, &m, &v) == NULL) {
-            // Caller passed a param the optimizer wasn't built for
-            cml_context_error(p->ctx, CML_INVALID_ARG,
-                              "adam: parameter not registered with this optimizer");
-            return;
-        }
-
-        cml_backend_adam_step(p->ctx, p, m, v, gradient,
+        cml_backend_adam_step(p->ctx, p,
+                              opt->inner.adam.m[i], opt->inner.adam.v[i], gradient,
                               opt->inner.adam.lr,
                               opt->inner.adam.beta1, opt->inner.adam.beta2,
                               opt->inner.adam.eps, bc1, bc2);

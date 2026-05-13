@@ -74,8 +74,10 @@ cml_tensor_t *cml_linear_bias(const cml_linear_t *layer) {
     return layer->b;
 }
 
-size_t cml_linear_collect_params(cml_linear_t *layer, cml_tensor_t **params, size_t offset) {
+size_t cml_linear_collect_params(cml_linear_t *layer, cml_tensor_t **params,
+                                 size_t capacity, size_t offset) {
     if (layer == NULL || params == NULL) return offset;
+    if (offset > capacity || capacity - offset < 2) return offset;
     params[offset]     = layer->w;
     params[offset + 1] = layer->b;
     return offset + 2;

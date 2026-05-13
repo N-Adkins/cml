@@ -10,10 +10,6 @@
 
 // This is a framework for training the models to make it easier with a nice ui.
 // You basically just throw everything in it and provide it a loss function and it will work.
-//
-// Invariant: params, optimizer, and any other long-lived state must be created
-// before cml_trainer_fit/fit_loader. Each batch runs inside an internal scope
-// that reclaims everything allocated during that batch
 
 typedef struct cml_trainer_s cml_trainer_t;
 

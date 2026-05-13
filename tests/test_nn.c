@@ -49,7 +49,7 @@ static void test_nn_module_forward_linear_known_values(void) {
     size_t n_params = cml_module_param_count(linear);
     cml_tensor_t *params[2];
     TEST_ASSERT_EQUAL_size_t(2, n_params);
-    TEST_ASSERT_EQUAL_size_t(2, cml_module_collect_params(linear, params, 0));
+    TEST_ASSERT_EQUAL_size_t(2, cml_module_collect_params(linear, params, 2, 0));
 
     cml_tensor_t *w = params[0];
     cml_tensor_t *b = params[1];
@@ -91,7 +91,7 @@ static void test_nn_module_forward_sequential_known_values(void) {
     cml_module_t *seq = cml_nn_sequential(ctx, children, 2);
 
     cml_tensor_t *params[2];
-    TEST_ASSERT_EQUAL_size_t(2, cml_module_collect_params(linear, params, 0));
+    TEST_ASSERT_EQUAL_size_t(2, cml_module_collect_params(linear, params, 2, 0));
     cml_tensor_t *w = params[0];
     cml_tensor_t *b = params[1];
 
@@ -121,7 +121,7 @@ static void test_nn_module_param_count_and_collect_nested(void) {
     TEST_ASSERT_EQUAL_size_t(4, cml_module_param_count(seq));
 
     cml_tensor_t *params[4];
-    size_t end = cml_module_collect_params(seq, params, 0);
+    size_t end = cml_module_collect_params(seq, params, 4, 0);
     TEST_ASSERT_EQUAL_size_t(4, end);
 
     TEST_ASSERT_EQUAL_size_t(3, cml_tensor_rows(params[0]));
@@ -147,7 +147,7 @@ static void test_nn_backward_through_sequential(void) {
     cml_module_t *seq = cml_nn_sequential(ctx, children, 2);
 
     cml_tensor_t *params[2];
-    TEST_ASSERT_EQUAL_size_t(2, cml_module_collect_params(linear, params, 0));
+    TEST_ASSERT_EQUAL_size_t(2, cml_module_collect_params(linear, params, 2, 0));
     cml_tensor_t *w = params[0];
     cml_tensor_t *b = params[1];
 

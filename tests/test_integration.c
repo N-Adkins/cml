@@ -71,7 +71,7 @@ static cml_status_t train_linreg(cml_context_t *ctx, size_t epochs, float lr,
     if (model.layer == NULL) return cml_get_status(ctx);
 
     cml_tensor_t *params[2];
-    size_t n_params = cml_linear_collect_params(model.layer, params, 0);
+    size_t n_params = cml_linear_collect_params(model.layer, params, 2, 0);
 
     cml_optimizer_t *opt = cml_optimizer_sgd(ctx, lr);
     if (opt == NULL) return cml_get_status(ctx);
@@ -146,7 +146,7 @@ static void xor_impl(cml_backend_t backend) {
     size_t n_params = cml_module_param_count(model.net);
     cml_tensor_t **params = (cml_tensor_t **)malloc(n_params * sizeof(*params));
     TEST_ASSERT_NOT_NULL(params);
-    cml_module_collect_params(model.net, params, 0);
+    cml_module_collect_params(model.net, params, n_params, 0);
 
     cml_optimizer_t *opt = cml_optimizer_adam(ctx, model.net, 0.01f, 0.9f, 0.999f, 1e-8f);
     cml_trainer_t *trainer = cml_trainer_init(ctx, &model, xor_forward,

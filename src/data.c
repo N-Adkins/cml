@@ -357,11 +357,7 @@ cml_dataset_t *cml_dataset_load_csv(cml_context_t *ctx, const char *path,
     cml_csv_field_t *fields = malloc(expected_cols * sizeof(cml_csv_field_t));
     float *row_values = malloc(expected_cols * sizeof(float));
     char **header_names = has_header ? calloc(expected_cols, sizeof(char *)) : NULL;
-    float *flat = NULL; // growing buffer for parsed rows
-    size_t flat_cap = 0;
-    size_t flat_used = 0;
-    size_t row_count = 0;
-    bool header_consumed = !has_header;
+    cml_dataset_t *result = NULL;
 
     bool ok = (fields != NULL && row_values != NULL && (!has_header || header_names != NULL));
     if (!ok) {
@@ -369,6 +365,11 @@ cml_dataset_t *cml_dataset_load_csv(cml_context_t *ctx, const char *path,
         goto cleanup;
     }
 
+    // Pass 1: parse header (if any) into the arena, then count data rows. We
+    // avoid buffering parsed floats up front so peak memory stays at ~1x the
+    // dataset rather than 2x (heap buffer + arena tensor).
+    size_t row_count = 0;
+    bool header_consumed = !has_header;
     for (;;) {
         size_t line_len = 0;
         int rc = cml_csv_read_line(file, &line, &line_cap, &line_len);
@@ -386,7 +387,6 @@ cml_dataset_t *cml_dataset_load_csv(cml_context_t *ctx, const char *path,
                 ok = false;
                 goto cleanup;
             }
-            // Copy into the arena up front; fields[] gets reused for subsequent rows
             for (size_t i = 0; i < expected_cols; i++) {
                 if (fields[i].len == 0) {
                     cml_context_error(ctx, CML_INVALID_ARG, "CSV header column name is empty");
@@ -400,49 +400,14 @@ cml_dataset_t *cml_dataset_load_csv(cml_context_t *ctx, const char *path,
             continue;
         }
 
-        if (!cml_csv_split_line(line, expected_cols, fields)) {
-            cml_context_error(ctx, CML_INVALID_ARG, "CSV row has invalid format");
+        if (row_count == SIZE_MAX) {
+            cml_context_error(ctx, CML_INVALID_ARG, "CSV row count overflow");
             ok = false;
             goto cleanup;
         }
-        if (!cml_csv_parse_floats(fields, expected_cols, row_values)) {
-            cml_context_error(ctx, CML_INVALID_ARG, "CSV row has non-numeric field");
-            ok = false;
-            goto cleanup;
-        }
-
-        if (flat_used + expected_cols > flat_cap) {
-            size_t needed = flat_used + expected_cols;
-            if (flat_used > SIZE_MAX - expected_cols) {
-                cml_context_error(ctx, CML_INVALID_ARG, "CSV row buffer overflow");
-                ok = false;
-                goto cleanup;
-            }
-            size_t new_cap = flat_cap == 0 ? expected_cols * 16 : flat_cap;
-            while (new_cap < needed) {
-                if (new_cap > SIZE_MAX / 2) { new_cap = needed; break; }
-                new_cap *= 2;
-            }
-            if (new_cap > SIZE_MAX / sizeof(float)) {
-                cml_context_error(ctx, CML_INVALID_ARG, "CSV row buffer overflow");
-                ok = false;
-                goto cleanup;
-            }
-            float *nb = realloc(flat, new_cap * sizeof(float));
-            if (nb == NULL) {
-                cml_context_error(ctx, CML_OUT_OF_MEMORY, "failed to grow CSV row buffer");
-                ok = false;
-                goto cleanup;
-            }
-            flat = nb;
-            flat_cap = new_cap;
-        }
-        memcpy(flat + flat_used, row_values, expected_cols * sizeof(float));
-        flat_used += expected_cols;
         row_count++;
     }
 
-    if (!ok) goto cleanup;
     if (row_count == 0) {
         cml_context_error(ctx, CML_INVALID_ARG, "CSV contains no data rows");
         ok = false;
@@ -457,10 +422,53 @@ cml_dataset_t *cml_dataset_load_csv(cml_context_t *ctx, const char *path,
     float *td = cml_tensor_data(targets_tensor);
     if (fd == NULL || td == NULL) { ok = false; goto cleanup; }
 
-    for (size_t r = 0; r < row_count; r++) {
-        const float *src = flat + r * expected_cols;
-        memcpy(fd + r * feature_cols, src, feature_cols * sizeof(float));
-        memcpy(td + r * target_cols, src + feature_cols, target_cols * sizeof(float));
+    // Pass 2: rewind and parse directly into the tensor rows.
+    if (fseek(file, 0, SEEK_SET) != 0) {
+        cml_context_error(ctx, CML_INVALID_ARG, "failed to rewind CSV file");
+        ok = false;
+        goto cleanup;
+    }
+
+    size_t parsed_rows = 0;
+    bool skip_header = has_header;
+    for (;;) {
+        size_t line_len = 0;
+        int rc = cml_csv_read_line(file, &line, &line_cap, &line_len);
+        if (rc < 0) {
+            cml_context_error(ctx, CML_OUT_OF_MEMORY, "failed to grow CSV line buffer");
+            ok = false;
+            goto cleanup;
+        }
+        if (rc == 0) break;
+        if (cml_csv_line_is_blank(line)) continue;
+        if (skip_header) { skip_header = false; continue; }
+
+        if (parsed_rows >= row_count) {
+            cml_context_error(ctx, CML_INVALID_ARG, "CSV row count changed between passes");
+            ok = false;
+            goto cleanup;
+        }
+        if (!cml_csv_split_line(line, expected_cols, fields)) {
+            cml_context_error(ctx, CML_INVALID_ARG, "CSV row has invalid format");
+            ok = false;
+            goto cleanup;
+        }
+        if (!cml_csv_parse_floats(fields, expected_cols, row_values)) {
+            cml_context_error(ctx, CML_INVALID_ARG, "CSV row has non-numeric field");
+            ok = false;
+            goto cleanup;
+        }
+        memcpy(fd + parsed_rows * feature_cols,
+               row_values, feature_cols * sizeof(float));
+        memcpy(td + parsed_rows * target_cols,
+               row_values + feature_cols, target_cols * sizeof(float));
+        parsed_rows++;
+    }
+
+    if (parsed_rows != row_count) {
+        cml_context_error(ctx, CML_INVALID_ARG, "CSV row count changed between passes");
+        ok = false;
+        goto cleanup;
     }
 
     cml_dataset_t *dataset = cml_dataset_from_tensors(ctx, features_tensor, targets_tensor);
@@ -474,23 +482,15 @@ cml_dataset_t *cml_dataset_load_csv(cml_context_t *ctx, const char *path,
             dataset->target_names[i] = header_names[feature_cols + i];
         }
     }
-
-    free(fields);
-    free(row_values);
-    free(header_names);
-    free(flat);
-    free(line);
-    fclose(file);
-    return dataset;
+    result = dataset;
 
 cleanup:
     free(fields);
     free(row_values);
     free(header_names);
-    free(flat);
     free(line);
     fclose(file);
-    return NULL;
+    return ok ? result : NULL;
 }
 
 size_t cml_dataset_num_samples(const cml_dataset_t *dataset) {

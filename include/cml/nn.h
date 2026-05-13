@@ -17,6 +17,12 @@ cml_tensor_t *cml_module_forward(cml_context_t *ctx, cml_module_t *module, cml_t
 
 // Parameter introspection for optimizers.
 size_t cml_module_param_count(const cml_module_t *module);
-size_t cml_module_collect_params(cml_module_t *module, cml_tensor_t **params, size_t offset);
+
+// Walks the module tree and writes parameter pointers into params[offset..].
+// Returns the new offset (number of params written + initial offset). If
+// writes would exceed `capacity`, the function stops early and returns the
+// offset reached so far.
+size_t cml_module_collect_params(cml_module_t *module, cml_tensor_t **params,
+                                 size_t capacity, size_t offset);
 
 #endif

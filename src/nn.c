@@ -126,17 +126,19 @@ size_t cml_module_param_count(const cml_module_t *module) {
     }
 }
 
-size_t cml_module_collect_params(cml_module_t *module, cml_tensor_t **params, size_t offset) {
+size_t cml_module_collect_params(cml_module_t *module, cml_tensor_t **params,
+                                 size_t capacity, size_t offset) {
     if (module == NULL || params == NULL) return offset;
 
     switch (module->kind) {
         case CML_MODULE_LINEAR:
-            return cml_linear_collect_params(module->as.linear, params, offset);
+            return cml_linear_collect_params(module->as.linear, params, capacity, offset);
         case CML_MODULE_RELU:
             return offset;
         case CML_MODULE_SEQUENTIAL:
             for (size_t i = 0; i < module->as.sequential.n_modules; i++) {
-                offset = cml_module_collect_params(module->as.sequential.modules[i], params, offset);
+                offset = cml_module_collect_params(module->as.sequential.modules[i],
+                                                    params, capacity, offset);
             }
             return offset;
         default:

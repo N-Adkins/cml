@@ -26,9 +26,9 @@ int main(void) {
     cml_context_t *ctx = cml_init_with_backend(1024, CML_BACKEND_CUDA);
     if (ctx == NULL) return 1;
 
-    const size_t n_samples = 1024;
-    const float x_min = -2.0f;
-    const float x_max = 2.0f;
+    const size_t n_samples = 25000;
+    const float x_min = -20.0f;
+    const float x_max = 20.0f;
 
     cml_tensor_t *x_train = cml_tensor_init(ctx, n_samples, 1);
     cml_tensor_t *y_train = cml_tensor_init(ctx, n_samples, 1);
@@ -44,9 +44,9 @@ int main(void) {
     cml_module_t *r1 = cml_nn_relu(ctx);
     cml_module_t *l2 = cml_nn_linear(ctx, 32, 128);
     cml_module_t *r2 = cml_nn_relu(ctx);
-    cml_module_t *l3 = cml_nn_linear(ctx, 128, 1024);
+    cml_module_t *l3 = cml_nn_linear(ctx, 128, 256);
     cml_module_t *r3 = cml_nn_relu(ctx);
-    cml_module_t *l4 = cml_nn_linear(ctx, 1024, 128);
+    cml_module_t *l4 = cml_nn_linear(ctx, 256, 128);
     cml_module_t *r4 = cml_nn_relu(ctx);
     cml_module_t *l5 = cml_nn_linear(ctx, 128, 32);
     cml_module_t *r5 = cml_nn_relu(ctx);
@@ -57,12 +57,12 @@ int main(void) {
 
     const size_t n_params = cml_module_param_count(model.net);
     cml_tensor_t **params = malloc(sizeof(cml_tensor_t*) * n_params);
-    cml_module_collect_params(model.net, params, 0);
+    cml_module_collect_params(model.net, params, n_params, 0);
 
     cml_optimizer_t *opt = cml_optimizer_adam(ctx, model.net, 0.001f, 0.9f, 0.999f, 1e-8f);
     cml_trainer_t *trainer = cml_trainer_init(ctx, &model, forward, params, n_params, opt);
     cml_dataset_t *dataset = cml_dataset_from_tensors(ctx, x_train, y_train);
-    cml_data_loader_t *loader = cml_data_loader_init(ctx, dataset, n_samples, false);
+    cml_data_loader_t *loader = cml_data_loader_init(ctx, dataset, 8192, false);
     if (dataset == NULL || loader == NULL) {
         fprintf(stderr, "dataset setup failed: %s\n", cml_get_error_msg(ctx));
         free(params);

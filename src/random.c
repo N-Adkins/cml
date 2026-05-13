@@ -37,11 +37,11 @@ size_t cml_rng_next_below(cml_rng_t *rng, size_t bound) {
         }
     }
     uint64_t b = (uint64_t)bound;
-    uint64_t limit = UINT64_MAX - (UINT64_MAX % b);
+    uint64_t limit = UINT64_MAX - ((0u - b) % b) + 1u;
     for (;;) {
         uint64_t hi = (uint64_t)cml_rng_next_u32(rng) << 32;
         uint64_t lo = (uint64_t)cml_rng_next_u32(rng);
         uint64_t r = hi | lo;
-        if (r < limit) return (size_t)(r % b);
+        if (limit == 0u || r < limit) return (size_t)(r % b);
     }
 }

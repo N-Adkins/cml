@@ -36,7 +36,7 @@ int main(void) {
     linreg_model_t model = { cml_linear_init(ctx, 1, 1) };
 
     cml_tensor_t *params[2];
-    size_t n_params = cml_linear_collect_params(model.layer, params, 0);
+    size_t n_params = cml_linear_collect_params(model.layer, params, 2, 0);
 
     cml_optimizer_t *opt = cml_optimizer_sgd(ctx, 0.05f);
     cml_trainer_t *trainer = cml_trainer_init(ctx, &model, linreg_forward,

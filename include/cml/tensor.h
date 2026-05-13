@@ -16,10 +16,14 @@ size_t cml_tensor_cols(const cml_tensor_t *tensor);
 float cml_tensor_get(const cml_tensor_t *tensor, size_t row, size_t col);
 void cml_tensor_set(cml_tensor_t *tensor, size_t row, size_t col, float value);
 
-// Returns host-visible data and marks host as the latest writer.
+// Returns host-visible data and marks host as the latest writer. On a
+// device-backed context, this also invalidates the device copy, so the next
+// op forces a host->device upload. Use cml_tensor_const_data for read-only
+// access to avoid that round-trip.
 float *cml_tensor_data(cml_tensor_t *tensor);
 
-// Returns host-visible data without marking host writes.
+// Returns host-visible data without marking host writes. Safe for read-only
+// access on device-backed contexts.
 const float *cml_tensor_const_data(const cml_tensor_t *tensor);
 
 // Explicitly synchronize this tensor's backing storage.
